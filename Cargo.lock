@@ -728,6 +728,7 @@ version = "0.1.0"
 dependencies = [
  "diskmap-categories",
  "diskmap-scanner",
+ "rayon",
  "serde",
  "tauri",
  "tauri-build",

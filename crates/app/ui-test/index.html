@@ -26,6 +26,45 @@
 
     <div class="right" id="right">
       <section class="tree" aria-label="Folder tree">
+        <div class="filters" id="filters" role="search">
+          <input id="f-name" type="search" placeholder="Search names (* and ? work too)" aria-label="Name">
+          <input id="f-ext" type="text" placeholder="Extensions: mp4, mkv" aria-label="Extensions">
+          <select id="f-min" aria-label="At least">
+            <option value="">Any size</option>
+            <option value="1048576">≥ 1 MB</option>
+            <option value="10485760">≥ 10 MB</option>
+            <option value="104857600">≥ 100 MB</option>
+            <option value="1073741824">≥ 1 GB</option>
+            <option value="10737418240">≥ 10 GB</option>
+          </select>
+          <select id="f-max" aria-label="At most">
+            <option value="">No limit</option>
+            <option value="1024">≤ 1 KB</option>
+            <option value="1048576">≤ 1 MB</option>
+            <option value="104857600">≤ 100 MB</option>
+            <option value="1073741824">≤ 1 GB</option>
+          </select>
+          <select id="f-age" aria-label="Modified">
+            <option value="">Any date</option>
+            <option value="-7">Changed in the last week</option>
+            <option value="-30">Changed in the last month</option>
+            <option value="-365">Changed in the last year</option>
+            <option value="365">Not changed for 1 year</option>
+            <option value="1095">Not changed for 3 years</option>
+          </select>
+          <select id="f-cat" aria-label="Category">
+            <option value="">All categories</option>
+          </select>
+          <label title="Also match folders (by name, total size, date and category)"><input type="checkbox" id="f-folders"> Folders</label>
+          <button id="f-clear" class="link" hidden>Clear</button>
+        </div>
+        <div class="viewbar" id="viewbar" hidden>
+          <span id="f-summary" aria-live="polite"></span>
+          <div class="seg">
+            <button data-view="results">Results</button>
+            <button data-view="tree">Tree</button>
+          </div>
+        </div>
         <div class="thead" id="thead" role="row">
           <div data-key="name" role="columnheader">Name</div>
           <div data-key="size" class="num" role="columnheader">Size</div>

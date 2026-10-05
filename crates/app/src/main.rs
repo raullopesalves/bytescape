@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod search;
 mod treemap;
 
 use std::path::PathBuf;
@@ -34,6 +35,15 @@ struct Session {
     categorise: Duration,
     rules_file: Option<String>,
     rules_error: Option<String>,
+    /// The active search, if any.
+    search: Option<SearchState>,
+    /// Bumped by every search, so the UI can't page through a stale one.
+    generation: u64,
+}
+
+struct SearchState {
+    generation: u64,
+    results: search::Results,
 }
 
 #[derive(Default)]
@@ -280,8 +290,95 @@ fn treemap(
         pad: pad.max(0.0),
         max_rects: 300_000,
     };
-    let rects = treemap::layout(&s.tree, &s.dominant, id, width, height, &opts);
+    let mut rects = treemap::layout(&s.tree, &s.dominant, id, width, height, &opts);
+    if let Some(st) = &s.search {
+        // Dim what doesn't match: files that aren't matches, and blocks
+        // with no match inside.
+        for r in &mut rects {
+            let mark = st.results.marks[r.id as usize];
+            let lit = match r.kind {
+                treemap::FILE => mark & search::SELF != 0,
+                _ => mark != 0,
+            };
+            if !lit {
+                r.kind |= treemap::DIMMED;
+            }
+        }
+    }
     Ok(Response::new(treemap::encode(&rects)))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSummary {
+    generation: u64,
+    count: usize,
+    bytes: u64,
+    millis: u64,
+}
+
+/// Runs a search and keeps its results for `search_page` and the treemap.
+/// An empty filter clears the search.
+#[tauri::command]
+fn search(state: State<AppState>, filter: search::Filter) -> Result<SearchSummary, String> {
+    let mut guard = state.session.lock().unwrap();
+    let s = guard.as_mut().ok_or("No scan yet.")?;
+    s.generation += 1;
+    let generation = s.generation;
+    if filter.is_empty() {
+        s.search = None;
+        return Ok(SearchSummary {
+            generation,
+            count: 0,
+            bytes: 0,
+            millis: 0,
+        });
+    }
+    let t = Instant::now();
+    let results = search::run(&s.tree, &filter);
+    let summary = SearchSummary {
+        generation,
+        count: results.ids.len(),
+        bytes: results.file_bytes,
+        millis: t.elapsed().as_millis() as u64,
+    };
+    s.search = Some(SearchState {
+        generation,
+        results,
+    });
+    Ok(summary)
+}
+
+#[tauri::command]
+fn clear_search(state: State<AppState>) {
+    if let Some(s) = state.session.lock().unwrap().as_mut() {
+        s.generation += 1;
+        s.search = None;
+    }
+}
+
+/// Matches `offset .. offset + limit` of search `generation`, largest first.
+#[tauri::command]
+fn search_page(
+    state: State<AppState>,
+    generation: u64,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<Details>, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let st = s
+        .search
+        .as_ref()
+        .filter(|st| st.generation == generation)
+        .ok_or("That search is out of date.")?;
+    let ids = st.results.ids.iter().skip(offset).take(limit.min(1000));
+    Ok(ids
+        .map(|&id| Details {
+            row: Row::new(&s.tree, id),
+            path: s.tree.path(id).display().to_string(),
+        })
+        .collect())
 }
 
 /// Opens the file manager with this node selected.
@@ -359,6 +456,8 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
             categorise: t.elapsed(),
             rules_file,
             rules_error,
+            search: None,
+            generation: 0,
         }
     });
     let event = match outcome {
@@ -417,6 +516,9 @@ fn main() {
             node_details,
             ancestors,
             treemap,
+            search,
+            search_page,
+            clear_search,
             reveal
         ])
         .run(tauri::generate_context!())

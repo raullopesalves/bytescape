@@ -22,6 +22,32 @@ const categories = [
 ];
 const handlers = {};
 
+// Search: name substring, extensions, min size and category, like src/search.rs.
+let searchState = null; // { generation, ids, marks }
+let generation = 0;
+function runSearch(f) {
+  generation += 1;
+  const empty = !f.name.trim() && f.extensions.length === 0 && f.minSize === null && f.maxSize === null
+    && f.modifiedAfter === null && f.modifiedBefore === null && f.category === null;
+  if (empty) { searchState = null; return { generation, count: 0, bytes: 0, millis: 0 }; }
+  const exts = f.extensions.map((e) => '.' + e.replace(/^\./, '').toLowerCase());
+  const hits = nodes.filter((n) => n.id !== 0
+    && (n.kind === 'file' || (n.kind === 'dir' && f.folders && exts.length === 0))
+    && (!f.name.trim() || n.name.toLowerCase().includes(f.name.trim().toLowerCase()))
+    && (exts.length === 0 || exts.some((e) => n.name.toLowerCase().endsWith(e)))
+    && (f.minSize === null || n.size >= f.minSize)
+    && (f.category === null || n.category === f.category))
+    .sort((a, b) => b.size - a.size);
+  const marks = new Map(); // id -> 1 (match) | 2 (match below)
+  for (const h of hits) {
+    marks.set(h.id, (marks.get(h.id) ?? 0) | 1);
+    for (let n = h; n.id !== 0;) { n = byId.get(n.parent); marks.set(n.id, (marks.get(n.id) ?? 0) | 2); }
+  }
+  searchState = { generation, ids: hits.map((h) => h.id), marks };
+  const bytes = hits.filter((h) => h.kind === 'file').reduce((t, h) => t + h.size, 0);
+  return { generation, count: hits.length, bytes, millis: 0 };
+}
+
 function chain(id) {
   const out = [];
   for (let n = byId.get(id); ; n = byId.get(n.parent)) {
@@ -55,7 +81,9 @@ function treemap({ id, width, height, pad }) {
     dv.setUint32(o + 16, nid, true);
     dv.setUint16(o + 20, cat, true);
     dv.setUint8(o + 22, depth);
-    dv.setUint8(o + 23, kind);
+    const mark = searchState?.marks.get(nid) ?? 0;
+    const lit = !searchState || (kind === 0 ? (mark & 1) !== 0 : mark !== 0);
+    dv.setUint8(o + 23, kind | (lit ? 0 : 0x80));
   });
   return buf;
 }
@@ -76,6 +104,13 @@ window.__TAURI__ = {
         case 'node_details': return { row: structuredClone(byId.get(args.id)), path: chain(args.id).map(([, name]) => name).join('\\') };
         case 'ancestors': return chain(args.id);
         case 'treemap': return treemap(args);
+        case 'search': return runSearch(args.filter);
+        case 'clear_search': searchState = null; return null;
+        case 'search_page': {
+          if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');
+          return searchState.ids.slice(args.offset, args.offset + args.limit)
+            .map((id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, name]) => name).join('\\') }));
+        }
         default: return null;
       }
     },

@@ -14,6 +14,8 @@ pub const DIR: u8 = 1;
 pub const REST: u8 = 2;
 /// Links and unreadable entries.
 pub const OTHER: u8 = 3;
+/// Flag on `kind`, set by the caller: draw this rectangle dimmed.
+pub const DIMMED: u8 = 0x80;
 
 /// Bytes per rectangle in [`encode`]'s output.
 pub const RECORD_BYTES: usize = 24;

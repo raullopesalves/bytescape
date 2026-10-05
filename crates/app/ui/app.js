@@ -125,6 +125,14 @@ async function loadResult() {
   const root = summary.root;
   visible = [{ row: root, depth: 0, parentSize: root.size }];
   selected = 0;
+  search = null;
+  resetFilters();
+  $('f-cat').innerHTML = '<option value="">All categories</option>' + [...summary.categories]
+    .filter((c) => c.files > 0)
+    .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('viewbar').hidden = true;
+  $('f-clear').hidden = true;
+  setView('tree');
 
   renderSide();
   $('empty').hidden = true;
@@ -163,7 +171,7 @@ function renderSide() {
     const pct = r.size > 0 ? (c.size * 100) / r.size : 0;
     const color = colorOf(c);
     const safe = c.cleanup === 'safe' ? '<span class="safe">usually safe to clean</span>' : '';
-    return `<li>
+    return `<li data-id="${c.id}" title="Show only ${esc(c.name)}">
       <div class="cat-head"><span class="swatch" style="background:${color}"></span>
         <span class="name">${esc(c.name)}</span><span class="size">${human(c.size)}</span></div>
       <div class="cat-bar"><span style="width:${pct}%;background:${color}"></span></div>
@@ -309,6 +317,7 @@ function rowHtml(i) {
 }
 
 function render() {
+  if (view === 'results') return renderResults();
   const sc = $('scroller');
   $('spacer').style.height = `${visible.length * ROW_H}px`;
   const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - OVERSCAN);
@@ -357,6 +366,7 @@ function parentIndex(i) {
 }
 
 function onKey(e) {
+  if (view === 'results') return onResultsKey(e);
   if (selected < 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
   const v = visible[selected];
@@ -406,6 +416,7 @@ function decodeRects(buf) {
   Object.assign(map, {
     n, x: f(), y: f(), w: f(), h: f(),
     id: new Uint32Array(n), cat: new Uint16Array(n), depth: new Uint8Array(n), kind: new Uint8Array(n),
+    dim: new Uint8Array(n),
   });
   map.index = new Map();
   for (let i = 0, o = 0; i < n; i++, o += RECORD) {
@@ -416,7 +427,9 @@ function decodeRects(buf) {
     map.id[i] = dv.getUint32(o + 16, true);
     map.cat[i] = dv.getUint16(o + 20, true);
     map.depth[i] = dv.getUint8(o + 22);
-    map.kind[i] = dv.getUint8(o + 23);
+    const kind = dv.getUint8(o + 23);
+    map.kind[i] = kind & 0x7f;
+    map.dim[i] = kind >> 7; // set while a filter is on: no match here
     if (map.kind[i] !== K_REST) map.index.set(map.id[i], i);
   }
 }
@@ -457,6 +470,7 @@ function drawMap() {
   const ctx = $('map').getContext('2d', { alpha: false });
   const frames = [cssVar('--map-frame-a'), cssVar('--map-frame-b')];
   const rest = cssVar('--map-rest');
+  const dim = cssVar('--map-dim');
   const other = cssVar('--map-other');
   ctx.fillStyle = cssVar('--map-bg');
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -487,11 +501,16 @@ function drawMap() {
       ctx.fillStyle = g;
       ctx.fillRect(x, y, gw, gh);
     }
+    if (map.dim[i]) {
+      ctx.fillStyle = dim;
+      ctx.fillRect(x, y, gw, gh);
+    }
   }
 }
 
 /** Rectangle of the tree's selected node, or of its nearest drawn ancestor. */
 function selectedRect() {
+  if (view === 'results') return resultRect();
   for (let i = selected; i >= 0; i = parentIndex(i)) {
     const r = map.index.get(visible[i]?.row.id);
     if (r !== undefined) return r;
@@ -615,6 +634,203 @@ async function revealInTree(id) {
   }
 }
 
+// ---------- search ----------
+
+const PAGE = 200;   // results fetched per request
+const DAY = 86400;
+
+let view = 'tree';  // 'tree', or 'results' while a filter is on
+let search = null;  // { generation, count, bytes, items, pages, sel, anc }
+let searchSeq = 0;
+let treeScroll = 0;
+
+function readFilter() {
+  const num = (id) => ($(id).value === '' ? null : Number($(id).value));
+  const age = num('f-age');
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    name: $('f-name').value,
+    extensions: $('f-ext').value.split(/[\s,;]+/).filter(Boolean),
+    minSize: num('f-min'),
+    maxSize: num('f-max'),
+    // Negative: changed within the last N days; positive: not for N days.
+    modifiedAfter: age !== null && age < 0 ? now + age * DAY : null,
+    modifiedBefore: age !== null && age > 0 ? now - age * DAY : null,
+    category: num('f-cat'),
+    folders: $('f-folders').checked,
+  };
+}
+
+/** Same rule as Filter::is_empty in src/search.rs. */
+function filterIsEmpty(f) {
+  return !f.name.trim() && f.extensions.length === 0 && f.minSize === null && f.maxSize === null
+    && f.modifiedAfter === null && f.modifiedBefore === null && f.category === null;
+}
+
+function resetFilters() {
+  for (const id of ['f-name', 'f-ext', 'f-min', 'f-max', 'f-age', 'f-cat']) $(id).value = '';
+  $('f-folders').checked = false;
+}
+
+async function applyFilters() {
+  if (!summary) return;
+  const f = readFilter();
+  const seq = ++searchSeq;
+  const r = await invoke('search', { filter: f });
+  if (seq !== searchSeq) return; // the user kept typing
+  const active = !filterIsEmpty(f);
+  for (const li of $('cats').children) li.classList.toggle('on', li.dataset.id === $('f-cat').value);
+  $('f-clear').hidden = !active;
+  $('viewbar').hidden = !active;
+  if (!active) {
+    search = null;
+    setView('tree');
+  } else {
+    search = { generation: r.generation, count: r.count, bytes: r.bytes, items: [], pages: new Set(), sel: -1, anc: [] };
+    const what = r.count === 1 ? 'match' : 'matches';
+    $('f-summary').textContent = r.count === 0
+      ? 'Nothing matches these filters.'
+      : `${fmtInt(r.count)} ${what} · ${human(r.bytes)} in files · ${r.millis} ms`;
+    if (view === 'results') $('scroller').scrollTop = 0;
+    setView('results');
+  }
+  layoutMap();
+}
+
+let filterTimer = 0;
+function applyFiltersSoon() {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(applyFilters, 200);
+}
+
+function setView(v) {
+  if (v === 'results' && !search) v = 'tree';
+  if (view !== v) {
+    if (view === 'tree') treeScroll = $('scroller').scrollTop;
+    view = v;
+    $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
+  }
+  for (const b of $('viewbar').querySelectorAll('[data-view]')) b.classList.toggle('on', b.dataset.view === v);
+  $('thead').classList.toggle('results', v === 'results');
+  $('thead').children[2].textContent = v === 'results' ? '% of all' : '% of parent';
+  render();
+  drawOverlay();
+}
+
+function loadPage(p) {
+  const s = search;
+  if (s.pages.has(p)) return;
+  s.pages.add(p);
+  invoke('search_page', { generation: s.generation, offset: p * PAGE, limit: PAGE })
+    .then((items) => {
+      if (search !== s) return;
+      items.forEach((it, k) => { s.items[p * PAGE + k] = it; });
+      renderSoon();
+    })
+    .catch(() => {}); // a newer search replaced this one
+}
+
+function resultHtml(i) {
+  const it = search.items[i];
+  if (!it) {
+    loadPage(Math.floor(i / PAGE));
+    return `<div class="row" data-i="${i}"><div class="name-cell"><span class="label">…</span></div></div>`;
+  }
+  const r = it.row;
+  const parent = it.path.slice(0, Math.max(0, it.path.length - r.name.length - 1));
+  const pct = summary.root.size > 0 ? (r.size * 100) / summary.root.size : 0;
+  const cat = cats.get(r.category);
+  const cls = ['row', r.kind];
+  if (i === search.sel) cls.push('sel');
+  if (r.flags & FLAG.DUP) cls.push('dup');
+  const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
+  return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
+    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span><span class="tag">${esc(parent)}</span></div>
+    <div class="num">${human(r.size)}</div>
+    <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
+    <div class="num">${human(r.alloc)}</div>
+    <div class="num">${r.kind === 'dir' ? fmtInt(r.files) : ''}</div>
+    <div class="num">${fmtDate(r.modified)}</div>
+    <div class="cat-cell">${catCell}</div>
+  </div>`;
+}
+
+function renderResults() {
+  const sc = $('scroller');
+  const n = search.count;
+  $('spacer').style.height = `${n * ROW_H}px`;
+  const rows = $('rows');
+  if (n === 0) {
+    rows.style.transform = '';
+    rows.innerHTML = '<div class="no-results">Nothing matches these filters.</div>';
+    return;
+  }
+  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - OVERSCAN);
+  const last = Math.min(n, Math.ceil((sc.scrollTop + sc.clientHeight) / ROW_H) + OVERSCAN);
+  rows.style.transform = `translateY(${first * ROW_H}px)`;
+  let html = '';
+  for (let i = first; i < last; i++) html += resultHtml(i);
+  rows.innerHTML = html;
+}
+
+async function selectResult(i) {
+  const s = search;
+  if (!s || i < 0 || i >= s.count) return;
+  s.sel = i;
+  s.anc = [];
+  ensureVisible(i);
+  render();
+  drawOverlay();
+  const it = s.items[i];
+  if (!it) return;
+  $('selpath').textContent = it.path;
+  $('reveal').hidden = false;
+  // Its ancestors let the treemap outline the nearest block that is drawn.
+  const chain = await invoke('ancestors', { id: it.row.id });
+  if (search !== s || s.sel !== i) return;
+  s.anc = chain.map(([id]) => id).reverse();
+  drawOverlay();
+}
+
+/** Treemap rectangle of the selected result, or of its nearest drawn ancestor. */
+function resultRect() {
+  for (const id of search?.anc ?? []) {
+    const r = map.index.get(id);
+    if (r !== undefined) return r;
+  }
+  return -1;
+}
+
+function showInTree(i) {
+  const id = search?.items[i]?.row.id;
+  if (id === undefined) return;
+  setView('tree');
+  revealInTree(id);
+}
+
+function onResultsKey(e) {
+  const s = search;
+  if (!s || s.count === 0) return;
+  const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
+  const at = Math.max(0, s.sel);
+  switch (e.key) {
+    case 'ArrowDown': selectResult(Math.min(s.count - 1, s.sel + 1)); break;
+    case 'ArrowUp': selectResult(Math.max(0, at - 1)); break;
+    case 'PageDown': selectResult(Math.min(s.count - 1, at + page)); break;
+    case 'PageUp': selectResult(Math.max(0, at - page)); break;
+    case 'Home': selectResult(0); break;
+    case 'End': selectResult(s.count - 1); break;
+    case 'Enter': showInTree(at); break;
+    default: return;
+  }
+  e.preventDefault();
+}
+
+/** Id of the selected node in whichever list is showing. */
+function currentId() {
+  return view === 'results' ? search?.items[search.sel]?.row.id : visible[selected]?.row.id;
+}
+
 // ---------- wiring ----------
 
 $('pick').addEventListener('click', pick);
@@ -622,25 +838,49 @@ $('pick-empty').addEventListener('click', pick);
 $('rescan').addEventListener('click', () => lastPath && startScan(lastPath));
 $('cancel').addEventListener('click', () => invoke('cancel_scan'));
 $('reveal').addEventListener('click', () => {
-  const v = visible[selected];
-  if (v) invoke('reveal', { id: v.row.id }).catch((e) => setStatus(String(e), true));
+  const id = currentId();
+  if (id !== undefined) invoke('reveal', { id }).catch((e) => setStatus(String(e), true));
 });
 
 $('thead').addEventListener('click', (e) => {
   const key = e.target.closest('[data-key]')?.dataset.key;
-  if (key) setSort(key);
+  if (key && view === 'tree') setSort(key);
 });
 
 $('rows').addEventListener('click', (e) => {
   const el = e.target.closest('.row');
   if (!el) return;
   const i = Number(el.dataset.i);
+  if (view === 'results') return selectResult(i);
   if (e.target.closest('.twisty')) toggle(i);
   select(i);
 });
 $('rows').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.row');
-  if (el && !e.target.closest('.twisty')) toggle(Number(el.dataset.i));
+  if (!el) return;
+  if (view === 'results') showInTree(Number(el.dataset.i));
+  else if (!e.target.closest('.twisty')) toggle(Number(el.dataset.i));
+});
+
+for (const id of ['f-name', 'f-ext']) $(id).addEventListener('input', applyFiltersSoon);
+for (const id of ['f-min', 'f-max', 'f-age', 'f-cat', 'f-folders']) $(id).addEventListener('change', applyFilters);
+$('f-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') applyFilters();
+  if (e.key === 'ArrowDown') { e.preventDefault(); $('scroller').focus(); if (view === 'results') selectResult(Math.max(0, search?.sel ?? 0)); }
+});
+$('f-clear').addEventListener('click', () => {
+  resetFilters();
+  applyFilters();
+});
+$('viewbar').addEventListener('click', (e) => {
+  const v = e.target.closest('[data-view]')?.dataset.view;
+  if (v) setView(v);
+});
+$('cats').addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  $('f-cat').value = $('f-cat').value === li.dataset.id ? '' : li.dataset.id;
+  applyFilters();
 });
 
 $('scroller').addEventListener('scroll', renderSoon);
@@ -663,7 +903,9 @@ overlay.addEventListener('mouseleave', () => {
 });
 overlay.addEventListener('click', (e) => {
   const { i } = eventRect(e);
-  if (i >= 0) revealInTree(map.id[i]);
+  if (i < 0) return;
+  setView('tree');
+  revealInTree(map.id[i]);
 });
 overlay.addEventListener('dblclick', (e) => {
   const { i } = eventRect(e);
