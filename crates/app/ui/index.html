@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>diskmap</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="toolbar">
+    <button id="pick" class="primary">Scan folder…</button>
+    <button id="rescan" hidden>Rescan</button>
+    <button id="cancel" hidden>Cancel</button>
+    <div id="status" class="status" aria-live="polite"></div>
+  </header>
+
+  <div id="empty" class="empty">
+    <div class="empty-card">
+      <h1>See what takes up space</h1>
+      <p>Pick a folder or a whole drive. diskmap scans it and groups everything by category.</p>
+      <button id="pick-empty" class="primary big">Scan folder…</button>
+    </div>
+  </div>
+
+  <main id="main" hidden>
+    <aside class="side">
+      <section class="totals" id="totals"></section>
+      <h2>By category</h2>
+      <ul class="cats" id="cats"></ul>
+      <p class="note" id="rules-note"></p>
+    </aside>
+
+    <section class="tree" aria-label="Folder tree">
+      <div class="thead" id="thead" role="row">
+        <div data-key="name" role="columnheader">Name</div>
+        <div data-key="size" class="num" role="columnheader">Size</div>
+        <div role="columnheader">% of parent</div>
+        <div data-key="alloc" class="num" role="columnheader">On disk</div>
+        <div data-key="files" class="num" role="columnheader">Files</div>
+        <div data-key="modified" class="num" role="columnheader">Modified</div>
+        <div data-key="category" role="columnheader">Category</div>
+      </div>
+      <div class="scroller" id="scroller" tabindex="0" role="tree">
+        <div id="spacer"></div>
+        <div id="rows"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar" id="statusbar" hidden>
+    <span id="selpath" class="selpath"></span>
+    <button id="reveal" class="link" hidden>Show in Explorer</button>
+  </footer>
+</body>
+</html>

@@ -1,6 +1,9 @@
 target/
 *.json
 !**/rules/*.json
+!crates/app/tauri.conf.json
+!crates/app/capabilities/*.json
+crates/app/gen/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/tasks.json
