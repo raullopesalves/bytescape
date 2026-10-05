@@ -7,8 +7,9 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use crate::fsinfo::{self, FileKey, VolumeInfo};
+use crate::mft::{self, MftError};
 use crate::tree::{flags, Node, NodeId, NodeKind, ScanStats, ScanTree};
-use crate::{ScanError, ScanOptions};
+use crate::{ScanError, ScanMethod, ScanOptions};
 
 /// Owned node built during the walk, flattened into the arena afterwards.
 struct Raw {
@@ -56,21 +57,15 @@ impl Ctx<'_> {
 /// Scans `root` and everything below it.
 ///
 /// Symlinks and junctions are listed but not followed. Unreadable entries
-/// become error nodes instead of stopping the scan.
+/// become error nodes instead of stopping the scan. With
+/// [`ScanMethod::Auto`] a whole NTFS drive is read from its MFT when that
+/// works, and walked otherwise (`stats().mft_skipped` says why).
 pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
     let start = Instant::now();
     let md = fs::metadata(root).map_err(ScanError::Root)?;
     if !md.is_dir() {
         return Err(ScanError::NotADirectory);
     }
-    let ctx = Ctx {
-        opts,
-        vol: fsinfo::volume_info(root),
-    };
-
-    let mut raw_root = Raw::new(root.to_string_lossy().into(), NodeKind::Dir);
-    raw_root.modified = fsinfo::modified_secs(&md);
-
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(opts.threads.unwrap_or(0))
         // Deep folder trees recurse; give workers room.
@@ -78,6 +73,40 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
         .thread_name(|i| format!("diskmap-scan-{i}"))
         .build()
         .expect("failed to start scan threads");
+
+    let try_mft = match opts.method {
+        ScanMethod::Walk => false,
+        ScanMethod::Mft => true,
+        ScanMethod::Auto => mft::is_volume_root(root),
+    };
+    let mut mft_skipped = None;
+    let mut mft_needs_admin = false;
+    if try_mft {
+        match pool.install(|| mft::scan(root, opts)) {
+            Ok(mut tree) => {
+                tree.stats.method = ScanMethod::Mft;
+                tree.stats.elapsed = start.elapsed();
+                return Ok(tree);
+            }
+            Err(MftError::Cancelled) => return Err(ScanError::Cancelled),
+            Err(e) => {
+                mft_needs_admin = matches!(e, MftError::NeedsAdmin);
+                mft_skipped = Some(e.to_string());
+                if let Some(p) = &opts.progress {
+                    for c in [&p.files, &p.dirs, &p.bytes] {
+                        c.store(0, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+
+    let ctx = Ctx {
+        opts,
+        vol: fsinfo::volume_info(root),
+    };
+    let mut raw_root = Raw::new(root.to_string_lossy().into(), NodeKind::Dir);
+    raw_root.modified = fsinfo::modified_secs(&md);
     pool.install(|| walk_dir(root, &mut raw_root, &ctx));
 
     if ctx.cancelled() {
@@ -88,6 +117,9 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
     let keys = std::mem::take(&mut tree.link_keys);
     tree.tree.compute_totals(&keys);
     tree.tree.stats.elapsed = start.elapsed();
+    tree.tree.stats.method = ScanMethod::Walk;
+    tree.tree.stats.mft_skipped = mft_skipped;
+    tree.tree.stats.mft_needs_admin = mft_needs_admin;
     Ok(tree.tree)
 }
 

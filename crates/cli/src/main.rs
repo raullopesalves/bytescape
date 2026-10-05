@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use categories::{Cleanup, Rules};
 use clap::Parser;
-use scanner::{flags, scan, NodeId, NodeKind, Progress, ScanOptions, ScanTree};
+use scanner::{flags, scan, NodeId, NodeKind, Progress, ScanMethod, ScanOptions, ScanTree};
 
 #[derive(Parser)]
 #[command(
@@ -58,6 +58,12 @@ struct Args {
     /// Category rules file (TOML), loaded after the built-in rules
     #[arg(long, value_name = "FILE")]
     rules: Option<PathBuf>,
+
+    /// auto: read the MFT for a whole NTFS drive when running as
+    /// administrator, else walk folders; walk: always walk; mft: try the MFT
+    /// for any folder (falls back to walking)
+    #[arg(long, default_value = "auto", value_parser = ["auto", "walk", "mft"])]
+    method: String,
 }
 
 fn main() -> ExitCode {
@@ -87,6 +93,11 @@ fn main() -> ExitCode {
         fast_listing: !args.slow_listing,
         progress: Some(progress.clone()),
         cancel: None,
+        method: match args.method.as_str() {
+            "walk" => ScanMethod::Walk,
+            "mft" => ScanMethod::Mft,
+            _ => ScanMethod::Auto,
+        },
     };
 
     let done = Arc::new(AtomicBool::new(false));
@@ -172,6 +183,14 @@ fn report(
         )?;
     }
     writeln!(o, "  Scan time     {:.2?}", s.elapsed)?;
+    let method = match s.method {
+        ScanMethod::Mft => "MFT".to_string(),
+        _ => match &s.mft_skipped {
+            Some(why) => format!("folder walk ({why})"),
+            None => "folder walk".to_string(),
+        },
+    };
+    writeln!(o, "  Method        {method}")?;
     writeln!(o, "  Categorised   {:.2?}", categorise_time)?;
 
     writeln!(

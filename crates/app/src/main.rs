@@ -9,6 +9,7 @@
 
 mod basket;
 mod drives;
+mod elevation;
 mod export;
 mod search;
 mod treemap;
@@ -140,6 +141,12 @@ struct Summary {
     categories: Vec<CategoryRow>,
     rules_file: Option<String>,
     rules_error: Option<String>,
+    /// "mft" or "walk".
+    method: &'static str,
+    /// Why the MFT was tried but not used.
+    mft_skipped: Option<String>,
+    /// A whole-drive scan that would be faster as administrator.
+    admin_would_help: bool,
 }
 
 /// The folder given on the command line (`diskmap <path>`), if any.
@@ -215,7 +222,22 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
         categories,
         rules_file: s.rules_file.clone(),
         rules_error: s.rules_error.clone(),
+        method: match st.method {
+            scanner::ScanMethod::Mft => "mft",
+            _ => "walk",
+        },
+        mft_skipped: st.mft_skipped.clone(),
+        admin_would_help: st.mft_needs_admin,
     })
+}
+
+/// Starts the app again as administrator to scan `path` (Windows asks the
+/// user first), then closes this one.
+#[tauri::command]
+fn relaunch_elevated(app: AppHandle, path: String) -> Result<(), String> {
+    elevation::relaunch(&path, owner_window(&app))?;
+    app.exit(0);
+    Ok(())
 }
 
 /// Direct children of a folder, in name order.
@@ -906,7 +928,26 @@ fn load_rules(app: &AppHandle) -> (Rules, Option<String>, Option<String>) {
 }
 
 fn main() {
+    let elevated = elevation::is_elevated();
+    if elevated {
+        // WebView2 can't share its data folder between elevated and normal
+        // processes, so the elevated app gets its own.
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let dir = PathBuf::from(local)
+                .join("dev.diskmap.desktop")
+                .join("EBWebView-admin");
+            std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
+        }
+    }
     tauri::Builder::default()
+        .setup(move |app| {
+            if elevated {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_title("diskmap (administrator)");
+                }
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         // Restores the window's size and position from the last run.
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -934,6 +975,7 @@ fn main() {
             overview,
             export,
             drives,
+            relaunch_elevated,
             reveal
         ])
         .run(tauri::generate_context!())

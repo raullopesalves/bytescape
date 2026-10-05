@@ -158,6 +158,7 @@ window.__TAURI__ = {
         case 'summary': return {
           root: byId.get(0), files: 7, dirs: 4, links: 0, errors: 0,
           hardlinkDups: 0, scanMs: 12, categoriseMs: 1, categories,
+          method: 'walk', mftSkipped: 'reading the MFT needs administrator rights', adminWouldHelp: true,
           rulesFile: 'C:\\config\\categories.toml', rulesError: null,
         };
         case 'children': return structuredClone(kidsOf(args.id));
@@ -183,6 +184,7 @@ window.__TAURI__ = {
         case 'basket_clear': basketItems = []; return basketView();
         case 'delete_basket': return deleteBasket(args);
         case 'cancel_scan': return null;
+        case 'relaunch_elevated': throw new Error('Not started: administrator rights were not given.');
         // Overview: "big.bin" (Caches, safe) is the one suggestion.
         case 'overview': {
           const d = (id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, x]) => x).join('\\') });

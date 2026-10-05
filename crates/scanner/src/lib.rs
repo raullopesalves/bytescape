@@ -12,6 +12,7 @@
 //! ```
 
 mod fsinfo;
+mod mft;
 mod tree;
 mod walk;
 
@@ -20,6 +21,20 @@ pub use walk::scan;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// How to read the folder tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScanMethod {
+    /// The MFT for a whole NTFS drive when that works (administrator
+    /// rights), otherwise the folder walk.
+    #[default]
+    Auto,
+    /// List folders one by one, in parallel. Works everywhere.
+    Walk,
+    /// Read the NTFS Master File Table, for any folder on an NTFS drive;
+    /// falls back to the walk if it can't. Needs administrator rights.
+    Mft,
+}
 
 /// Settings for a scan. `ScanOptions::default()` is right for most uses.
 #[derive(Clone, Debug)]
@@ -36,6 +51,7 @@ pub struct ScanOptions {
     pub progress: Option<Arc<Progress>>,
     /// Set to `true` from another thread to stop the scan early.
     pub cancel: Option<Arc<AtomicBool>>,
+    pub method: ScanMethod,
 }
 
 impl Default for ScanOptions {
@@ -46,6 +62,7 @@ impl Default for ScanOptions {
             fast_listing: true,
             progress: None,
             cancel: None,
+            method: ScanMethod::Auto,
         }
     }
 }

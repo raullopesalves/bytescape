@@ -82,6 +82,7 @@ async function startScan(path) {
   }
   lastPath = path;
   store.set('lastPath', path);
+  $('elevate').hidden = true;
   summary = null;
   $('main').hidden = true;
   $('statusbar').hidden = true;
@@ -144,7 +145,9 @@ async function loadResult() {
   $('main').hidden = false;
   $('statusbar').hidden = false;
   $('scroller').scrollTop = 0;
-  setStatus(`Scanned in ${(summary.scanMs / 1000).toFixed(1)} s, categorised in ${summary.categoriseMs} ms`);
+  const how = summary.method === 'mft' ? "read from the drive's file table" : 'folder by folder';
+  setStatus(`Scanned in ${(summary.scanMs / 1000).toFixed(1)} s (${how}), categorised in ${summary.categoriseMs} ms`);
+  $('elevate').hidden = !summary.adminWouldHelp;
   await expand(0);
   select(0);
   $('scroller').focus();
@@ -1187,6 +1190,10 @@ $('pick').addEventListener('click', pick);
 $('pick-empty').addEventListener('click', pick);
 $('rescan').addEventListener('click', () => lastPath && startScan(lastPath));
 $('cancel').addEventListener('click', () => invoke('cancel_scan'));
+$('elevate').addEventListener('click', () => {
+  setStatus('Waiting for Windows to allow administrator rights…');
+  invoke('relaunch_elevated', { path: lastPath }).catch((e) => setStatus(String(e), true));
+});
 $('reveal').addEventListener('click', () => {
   const id = currentId();
   if (id !== undefined) invoke('reveal', { id }).catch((e) => setStatus(String(e), true));

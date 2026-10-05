@@ -84,6 +84,12 @@ pub struct ScanStats {
     pub errors: u64,
     pub hardlink_dups: u64,
     pub elapsed: Duration,
+    /// How the tree was read: [`ScanMethod::Walk`](crate::ScanMethod) or `Mft`.
+    pub method: crate::ScanMethod,
+    /// Why the MFT was tried but not used, if it was.
+    pub mft_skipped: Option<String>,
+    /// The MFT was tried and only administrator rights were missing.
+    pub mft_needs_admin: bool,
 }
 
 /// The result of a scan: a flat arena of nodes.
