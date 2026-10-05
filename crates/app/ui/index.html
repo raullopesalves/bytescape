@@ -31,21 +31,34 @@
       <p class="note" id="rules-note"></p>
     </aside>
 
-    <section class="tree" aria-label="Folder tree">
-      <div class="thead" id="thead" role="row">
-        <div data-key="name" role="columnheader">Name</div>
-        <div data-key="size" class="num" role="columnheader">Size</div>
-        <div role="columnheader">% of parent</div>
-        <div data-key="alloc" class="num" role="columnheader">On disk</div>
-        <div data-key="files" class="num" role="columnheader">Files</div>
-        <div data-key="modified" class="num" role="columnheader">Modified</div>
-        <div data-key="category" role="columnheader">Category</div>
-      </div>
-      <div class="scroller" id="scroller" tabindex="0" role="tree">
-        <div id="spacer"></div>
-        <div id="rows"></div>
-      </div>
-    </section>
+    <div class="right" id="right">
+      <section class="tree" aria-label="Folder tree">
+        <div class="thead" id="thead" role="row">
+          <div data-key="name" role="columnheader">Name</div>
+          <div data-key="size" class="num" role="columnheader">Size</div>
+          <div role="columnheader">% of parent</div>
+          <div data-key="alloc" class="num" role="columnheader">On disk</div>
+          <div data-key="files" class="num" role="columnheader">Files</div>
+          <div data-key="modified" class="num" role="columnheader">Modified</div>
+          <div data-key="category" role="columnheader">Category</div>
+        </div>
+        <div class="scroller" id="scroller" tabindex="0" role="tree">
+          <div id="spacer"></div>
+          <div id="rows"></div>
+        </div>
+      </section>
+
+      <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
+      <section class="map" id="map-pane" aria-label="Treemap">
+        <nav class="crumbs" id="crumbs" aria-label="Treemap location"></nav>
+        <div class="map-wrap" id="map-wrap">
+          <canvas id="map"></canvas>
+          <canvas id="map-overlay"></canvas>
+          <div class="tip" id="tip" hidden></div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <footer class="statusbar" id="statusbar" hidden>

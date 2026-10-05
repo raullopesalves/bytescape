@@ -2,9 +2,12 @@
 //!
 //! The scan runs on a background thread and reports progress through the
 //! `scan-progress` event, then `scan-done` or `scan-error`. The finished tree
-//! stays here; the UI asks for one folder's children at a time.
+//! stays here; the UI asks for one folder's children at a time, and for
+//! treemap layouts as packed binary rectangles.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod treemap;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +18,7 @@ use std::time::{Duration, Instant};
 use categories::{Cleanup, Rules};
 use scanner::{NodeId, NodeKind, Progress, ScanOptions, ScanTree};
 use serde::Serialize;
+use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -25,6 +29,8 @@ const USER_RULES: &str = "categories.toml";
 struct Session {
     tree: ScanTree,
     rules: Rules,
+    /// Colour category per node for the treemap (see `treemap::dominant_categories`).
+    dominant: Vec<u16>,
     categorise: Duration,
     rules_file: Option<String>,
     rules_error: Option<String>,
@@ -212,6 +218,72 @@ fn node_path(state: State<AppState>, id: NodeId) -> Result<String, String> {
     Ok(tree.path(id).display().to_string())
 }
 
+/// One node and its full path, for tooltips.
+#[derive(Serialize)]
+struct Details {
+    row: Row,
+    path: String,
+}
+
+#[tauri::command]
+fn node_details(state: State<AppState>, id: NodeId) -> Result<Details, String> {
+    let guard = state.session.lock().unwrap();
+    let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
+    if id as usize >= tree.len() {
+        return Err(format!("No node {id}."));
+    }
+    Ok(Details {
+        row: Row::new(tree, id),
+        path: tree.path(id).display().to_string(),
+    })
+}
+
+/// The node and its ancestors, root first, as `(id, name)`.
+#[tauri::command]
+fn ancestors(state: State<AppState>, id: NodeId) -> Result<Vec<(NodeId, String)>, String> {
+    let guard = state.session.lock().unwrap();
+    let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
+    if id as usize >= tree.len() {
+        return Err(format!("No node {id}."));
+    }
+    let mut out = Vec::new();
+    let mut cur = id;
+    loop {
+        out.push((cur, tree.node(cur).name.to_string()));
+        if cur == tree.root() {
+            break;
+        }
+        cur = tree.node(cur).parent;
+    }
+    out.reverse();
+    Ok(out)
+}
+
+/// Treemap of the subtree under `id` for a `width` x `height` pixel canvas,
+/// packed as described in `treemap::encode`.
+#[tauri::command]
+fn treemap(
+    state: State<AppState>,
+    id: NodeId,
+    width: f64,
+    height: f64,
+    min_area: f64,
+    pad: f64,
+) -> Result<Response, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    if id as usize >= s.tree.len() {
+        return Err(format!("No node {id}."));
+    }
+    let opts = treemap::Options {
+        min_area: min_area.max(0.5),
+        pad: pad.max(0.0),
+        max_rects: 300_000,
+    };
+    let rects = treemap::layout(&s.tree, &s.dominant, id, width, height, &opts);
+    Ok(Response::new(treemap::encode(&rects)))
+}
+
 /// Opens the file manager with this node selected.
 #[tauri::command]
 fn reveal(state: State<AppState>, id: NodeId) -> Result<(), String> {
@@ -279,9 +351,11 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
         let (rules, rules_file, rules_error) = load_rules(&app);
         let t = Instant::now();
         rules.apply(&mut tree);
+        let dominant = treemap::dominant_categories(&tree, rules.categories().len());
         Session {
             tree,
             rules,
+            dominant,
             categorise: t.elapsed(),
             rules_file,
             rules_error,
@@ -340,6 +414,9 @@ fn main() {
             summary,
             children,
             node_path,
+            node_details,
+            ancestors,
+            treemap,
             reveal
         ])
         .run(tauri::generate_context!())

@@ -11,6 +11,11 @@
   --bar: #c9d3ec;
   --warn: #b5541c;
   --safe: #2f7d3e;
+  --map-bg: #ffffff;
+  --map-frame-a: #d9dbe1;
+  --map-frame-b: #c6c9d1;
+  --map-rest: rgba(255, 255, 255, 0.5);
+  --map-other: #b9bcc4;
   color-scheme: light;
 }
 
@@ -28,6 +33,11 @@
     --bar: #3a4a74;
     --warn: #f0a070;
     --safe: #7fd08e;
+    --map-bg: #121317;
+    --map-frame-a: #2b2d35;
+    --map-frame-b: #383b45;
+    --map-rest: rgba(18, 19, 23, 0.5);
+    --map-other: #4a4d57;
     color-scheme: dark;
   }
 }
@@ -150,12 +160,81 @@ main {
 .note { color: var(--muted); font-size: 12px; margin-top: 14px; word-break: break-all; }
 .note.error { color: var(--warn); }
 
-.tree {
+.right {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
+
+.tree {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+
+.splitter {
+  height: 6px;
+  flex: none;
+  cursor: row-resize;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.splitter:hover, .splitter.dragging { background: var(--hover); }
+
+.map {
+  height: 45%;
+  min-height: 120px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 26px;
+}
+.crumbs button { border: none; background: none; padding: 1px 4px; color: var(--accent); font-size: 12px; }
+.crumbs button:hover { text-decoration: underline; background: none; }
+.crumbs .here { color: var(--text); font-weight: 600; padding: 1px 4px; }
+.crumbs .sep { opacity: .6; }
+
+.map-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  margin: 0 8px 8px;
+}
+.map-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tip {
+  position: absolute;
+  max-width: 420px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+  pointer-events: none;
+  font-size: 12px;
+  z-index: 2;
+}
+.tip .t-name { font-weight: 600; word-break: break-all; }
+.tip .t-meta { display: flex; align-items: center; gap: 6px; color: var(--muted); margin-top: 2px; }
+.tip .t-path { color: var(--muted); word-break: break-all; margin-top: 2px; }
 
 .thead, .row {
   display: grid;

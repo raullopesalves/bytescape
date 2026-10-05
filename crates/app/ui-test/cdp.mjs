@@ -1,6 +1,7 @@
 // Drives a page over the Chrome DevTools Protocol (WebView2 or headless Edge).
 // See docs/HANDOFF.md ("Testing the UI"). Port: CDP_PORT (default 9222).
 // usage: node cdp.mjs eval "<js>" | shot <file.png> | key <Key> [count] | click <x> <y> [double]
+//        | send <Method> '<json params>'   (any protocol call, e.g. Emulation.setEmulatedMedia)
 import { writeFileSync } from 'node:fs';
 const targets = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9222}/json`)).json();
 const page = targets.find(t => t.type === 'page' && /^(file|http)/.test(t.url));
@@ -21,6 +22,8 @@ if (cmd === 'eval') {
   for (let i = 0; i < Number(b || 1); i++) for (const type of ['keyDown', 'keyUp'])
     await send('Input.dispatchKeyEvent', { type, key: a, code: a, windowsVirtualKeyCode: codes[a] });
   console.log('ok');
+} else if (cmd === 'send') {
+  console.log(JSON.stringify((await send(a, b ? JSON.parse(b) : {})).result ?? {}));
 } else if (cmd === 'click') {
   const clickCount = c ? 2 : 1;
   for (let k = 1; k <= clickCount; k++) for (const type of ['mousePressed', 'mouseReleased'])
