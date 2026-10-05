@@ -92,6 +92,22 @@ paths = ["**/VirtualBox VMs/**", "**/Hyper-V/Virtual Hard Disks/**", "**/AppData
 extensions = ["iso", "img", "vhd", "vhdx", "vmdk", "vdi", "qcow2", "ova", "ovf", "dmg", "wim", "esd"]
 
 [[category]]
+id = "ai-models"
+name = "AI models"
+color = "purple"
+cleanup = "review"
+paths = [
+    "?:/Users/*/.ollama/models/**",
+    "?:/Users/*/.lmstudio/models/**",
+    "?:/Users/*/.cache/lm-studio/models/**",
+    "?:/Users/*/.cache/huggingface/**",
+    "?:/Users/*/.cache/torch/**",
+    "**/ComfyUI/models/**",
+    "**/stable-diffusion-webui/models/**",
+]
+extensions = ["gguf", "ggml", "safetensors", "onnx", "ckpt", "pt", "pth", "tflite", "mlmodel"]
+
+[[category]]
 id = "code"
 name = "Code"
 color = "teal"

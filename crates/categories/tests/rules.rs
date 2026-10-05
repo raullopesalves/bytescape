@@ -61,7 +61,12 @@ fn default_rules() {
             ("C:/Users/r/AppData/Local/Packages/App_1/LocalCache/Roaming/v.mp4", false, "videos"),
             ("C:/Users/r/AppData/Local/Packages/App_1/LocalCache/Local/x/Cache/f", false, "caches"),
             ("C:/Users/r/AppData/Local/Packages/App_1/AC/INetCache/f", false, "caches"),
-            ("C:/Users/r/.cache/huggingface/hub/model.bin", false, "caches"),
+            ("C:/Users/r/.cache/pip/http/a.bin", false, "caches"),
+            // AI models: by folder (deeper than ~/.cache) or by extension.
+            ("C:/Users/r/.cache/huggingface/hub/model.bin", false, "ai-models"),
+            ("C:/Users/r/.ollama/models/blobs/sha256-0123", false, "ai-models"),
+            ("D:/models/llama-3-8b.Q4_K_M.gguf", false, "ai-models"),
+            ("D:/models/sdxl.SAFETENSORS", false, "ai-models"),
             ("C:/Users/r/Documents/My Games/Game/Saved/save1.sav", false, "games"),
             ("C:/Users/r/AppData/Roaming/.minecraft/saves/w/level.dat", false, "games"),
             ("C:/src/proj/.git/objects/pack/pack-1.pack", false, "code"),
@@ -87,7 +92,7 @@ fn default_rules_metadata() {
     let caches = rules.category(rules.id_of("caches").unwrap()).unwrap();
     assert_eq!(caches.name, "Caches and temp");
     assert_eq!(caches.cleanup, Cleanup::Safe);
-    assert_eq!(rules.categories().len(), 14);
+    assert_eq!(rules.categories().len(), 15);
 }
 
 #[test]
