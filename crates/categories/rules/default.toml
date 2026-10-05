@@ -1,0 +1,187 @@
+# Default diskmap categories.
+#
+# Each [[category]] has an id, a display name, a colour name for the UI, a
+# cleanup hint, and rules:
+#
+#   paths       globs matched against the full path, with / as separator and
+#               ignoring case. "?:" matches any drive letter. A trailing /**
+#               means the folder and everything under it. A leading ! makes
+#               an exception: it clears the path category there, so
+#               extension rules apply again.
+#   extensions  file extensions without the dot, ignoring case. "tar.gz"
+#               style entries work; the longest matching one wins.
+#
+# A path rule beats an extension rule, and the deepest matching folder wins,
+# so C:\Windows\Temp is "Caches and temp" even though C:\Windows is "Windows
+# system". On a tie, the rule loaded last wins. A user rules file is loaded
+# after this one: a category there with an existing id adds its rules to that
+# category and overrides any of name, color and cleanup it sets.
+#
+# cleanup: never  (warn before deleting), review (look before deleting),
+#          safe   (usually safe to clean)
+
+# Files that match no rule.
+fallback = "other"
+
+[[category]]
+id = "games"
+name = "Games"
+color = "violet"
+cleanup = "never"
+paths = [
+    "**/steamapps/common/**",
+    "**/Epic Games/**",
+    "**/GOG Galaxy/Games/**",
+    "**/XboxGames/**",
+    "**/Riot Games/**",
+    "**/EA Games/**",
+    "**/Ubisoft Game Launcher/games/**",
+    # Saved games and settings.
+    "**/My Games/**",
+    "?:/Users/*/Saved Games/**",
+    "**/.minecraft/**",
+]
+
+[[category]]
+id = "videos"
+name = "Videos"
+color = "rose"
+cleanup = "never"
+extensions = ["mp4", "mkv", "avi", "mov", "wmv", "webm", "m4v", "flv", "mpg", "mpeg", "m2ts", "mts", "3gp", "vob"]
+
+[[category]]
+id = "pictures"
+name = "Pictures"
+color = "amber"
+cleanup = "never"
+extensions = [
+    "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff", "svg", "avif",
+    "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "psd", "xcf",
+]
+
+[[category]]
+id = "music"
+name = "Music"
+color = "pink"
+cleanup = "never"
+extensions = ["mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "wma", "opus", "aiff", "aif", "ape", "mid", "midi"]
+
+[[category]]
+id = "documents"
+name = "Documents"
+color = "blue"
+cleanup = "never"
+extensions = [
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "md",
+    "csv", "epub", "mobi", "one", "pages", "numbers", "key",
+]
+
+[[category]]
+id = "archives"
+name = "Archives"
+color = "orange"
+cleanup = "review"
+extensions = ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "lz4", "cab", "tar.gz", "tar.bz2", "tar.xz", "tar.zst"]
+
+[[category]]
+id = "disk-images"
+name = "Disk images and VMs"
+color = "slate"
+cleanup = "review"
+paths = ["**/VirtualBox VMs/**", "**/Hyper-V/Virtual Hard Disks/**", "**/AppData/Local/Docker/wsl/**"]
+extensions = ["iso", "img", "vhd", "vhdx", "vmdk", "vdi", "qcow2", "ova", "ovf", "dmg", "wim", "esd"]
+
+[[category]]
+id = "code"
+name = "Code"
+color = "teal"
+cleanup = "never"
+paths = ["**/.git/**"]
+extensions = [
+    "rs", "py", "js", "mjs", "ts", "tsx", "jsx", "c", "h", "cpp", "cc", "hpp", "cs", "java", "kt",
+    "go", "rb", "php", "swift", "scala", "lua", "sh", "ps1", "bat", "sql", "html", "css", "scss",
+    "vue", "svelte", "ipynb",
+]
+
+[[category]]
+id = "dev-deps"
+name = "Developer dependencies"
+color = "cyan"
+cleanup = "review"
+paths = [
+    "**/node_modules/**",
+    "**/.cargo/registry/**",
+    "**/.cargo/git/**",
+    "**/.rustup/toolchains/**",
+    "**/.m2/repository/**",
+    "**/.gradle/caches/**",
+    "**/.nuget/packages/**",
+    "**/site-packages/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/go/pkg/mod/**",
+    "**/AppData/Local/pnpm/store/**",
+    "**/AppData/Local/Yarn/Cache/**",
+]
+
+[[category]]
+id = "caches"
+name = "Caches and temp"
+color = "lime"
+cleanup = "safe"
+paths = [
+    "**/AppData/Local/Temp/**",
+    "?:/Windows/Temp/**",
+    "?:/Windows/SoftwareDistribution/Download/**",
+    "**/AppData/Local/CrashDumps/**",
+    "**/AppData/Local/Microsoft/Windows/INetCache/**",
+    # Any folder with "cache" in its name, but only under AppData: elsewhere
+    # (inside Windows or a game) such a folder may not be safe to clear.
+    "**/AppData/**/*cache*/**",
+    # Store apps keep their real AppData in LocalCache; not a cache.
+    "!**/AppData/Local/Packages/*/LocalCache/**",
+    "?:/Users/*/.cache/**",
+    "**/__pycache__/**",
+]
+extensions = ["tmp", "temp", "dmp"]
+
+[[category]]
+id = "programs"
+name = "Programs"
+color = "indigo"
+cleanup = "never"
+paths = [
+    "?:/Program Files/**",
+    "?:/Program Files (x86)/**",
+    "**/AppData/Local/Programs/**",
+    "?:/ProgramData/chocolatey/**",
+    "**/scoop/apps/**",
+]
+extensions = ["exe", "dll", "msi", "msix", "msixbundle", "appx", "appxbundle"]
+
+[[category]]
+id = "windows"
+name = "Windows system"
+color = "gray"
+cleanup = "never"
+paths = [
+    "?:/Windows/**",
+    "?:/pagefile.sys",
+    "?:/hiberfil.sys",
+    "?:/swapfile.sys",
+    "?:/System Volume Information/**",
+    "?:/Recovery/**",
+]
+
+[[category]]
+id = "recycle-bin"
+name = "Recycle bin"
+color = "green"
+cleanup = "safe"
+paths = ["?:/$Recycle.Bin/**"]
+
+[[category]]
+id = "other"
+name = "Other"
+color = "zinc"
+cleanup = "review"

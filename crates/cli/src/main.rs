@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use categories::{Cleanup, Rules};
 use clap::Parser;
 use scanner::{flags, scan, NodeId, NodeKind, Progress, ScanOptions, ScanTree};
 
@@ -53,10 +54,32 @@ struct Args {
     /// List every entry that could not be read
     #[arg(long)]
     show_errors: bool,
+
+    /// Category rules file (TOML), loaded after the built-in rules
+    #[arg(long, value_name = "FILE")]
+    rules: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    let rules = match &args.rules {
+        None => Rules::defaults(),
+        Some(path) => {
+            let loaded = std::fs::read_to_string(path)
+                .map_err(|e| format!("{}: {e}", path.display()))
+                .and_then(|text| {
+                    Rules::with_user_rules(&path.display().to_string(), &text)
+                        .map_err(|e| e.to_string())
+                });
+            match loaded {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error: cannot load rules: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    };
     let progress = Arc::new(Progress::default());
     let opts = ScanOptions {
         threads: args.threads,
@@ -88,20 +111,23 @@ fn main() -> ExitCode {
         let _ = t.join();
     }
 
-    let tree = match result {
+    let mut tree = match result {
         Ok(t) => t,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
         }
     };
+    let start = Instant::now();
+    rules.apply(&mut tree);
+    let categorise_time = start.elapsed();
 
-    if let Err(e) = report(&tree, &args) {
+    if let Err(e) = report(&tree, &rules, categorise_time, &args) {
         eprintln!("error: {e}");
         return ExitCode::FAILURE;
     }
     if let Some(path) = &args.json {
-        match write_json(&tree, path, args.depth, args.min_size) {
+        match write_json(&tree, &rules, path, args.depth, args.min_size) {
             Ok(()) => println!("\nJSON written to {}", path.display()),
             Err(e) => {
                 eprintln!("error writing JSON: {e}");
@@ -112,7 +138,12 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn report(tree: &ScanTree, args: &Args) -> io::Result<()> {
+fn report(
+    tree: &ScanTree,
+    rules: &Rules,
+    categorise_time: Duration,
+    args: &Args,
+) -> io::Result<()> {
     let out = io::stdout();
     let mut o = out.lock();
     let root = tree.node(tree.root());
@@ -141,6 +172,35 @@ fn report(tree: &ScanTree, args: &Args) -> io::Result<()> {
         )?;
     }
     writeln!(o, "  Scan time     {:.2?}", s.elapsed)?;
+    writeln!(o, "  Categorised   {:.2?}", categorise_time)?;
+
+    writeln!(
+        o,
+        "
+By category"
+    )?;
+    let mut totals = rules.totals(tree);
+    totals.retain(|t| t.files > 0);
+    totals.sort_by_key(|t| std::cmp::Reverse(t.size));
+    for t in totals {
+        let pct = if root.size > 0 {
+            t.size as f64 * 100.0 / root.size as f64
+        } else {
+            0.0
+        };
+        let (name, hint) = match rules.category(t.category) {
+            Some(c) if c.cleanup == Cleanup::Safe => (c.name.as_str(), "  [usually safe to clean]"),
+            Some(c) => (c.name.as_str(), ""),
+            None => ("Uncategorised", ""),
+        };
+        writeln!(
+            o,
+            "  {:>10}  {:>5.1}%  {:>8} files  {name}{hint}",
+            human(t.size),
+            pct,
+            t.files
+        )?;
+    }
 
     writeln!(o, "\nLargest items in {}", root.name)?;
     for id in tree
@@ -148,12 +208,12 @@ fn report(tree: &ScanTree, args: &Args) -> io::Result<()> {
         .into_iter()
         .take(args.top)
     {
-        row(&mut o, tree, id, root.size, false)?;
+        row(&mut o, tree, rules, id, root.size, false)?;
     }
 
     writeln!(o, "\nLargest files")?;
     for id in tree.largest_files(args.top) {
-        row(&mut o, tree, id, root.size, true)?;
+        row(&mut o, tree, rules, id, root.size, true)?;
     }
 
     if args.show_errors && !tree.errors().is_empty() {
@@ -168,6 +228,7 @@ fn report(tree: &ScanTree, args: &Args) -> io::Result<()> {
 fn row(
     o: &mut impl Write,
     tree: &ScanTree,
+    rules: &Rules,
     id: NodeId,
     total: u64,
     full_path: bool,
@@ -186,6 +247,9 @@ fn row(
         n.name.to_string()
     };
     let mut notes = Vec::new();
+    if let Some(c) = rules.category(n.category) {
+        notes.push(c.name.as_str());
+    }
     if n.has_flag(flags::CLOUD_PLACEHOLDER) {
         notes.push("online-only");
     }
@@ -231,7 +295,13 @@ fn human(bytes: u64) -> String {
     }
 }
 
-fn write_json(tree: &ScanTree, path: &PathBuf, depth: usize, min_size: u64) -> io::Result<()> {
+fn write_json(
+    tree: &ScanTree,
+    rules: &Rules,
+    path: &PathBuf,
+    depth: usize,
+    min_size: u64,
+) -> io::Result<()> {
     let mut w = BufWriter::new(File::create(path)?);
     let s = tree.stats();
     write!(
@@ -239,7 +309,33 @@ fn write_json(tree: &ScanTree, path: &PathBuf, depth: usize, min_size: u64) -> i
         "{{\"stats\":{{\"files\":{},\"dirs\":{},\"symlinks\":{},\"errors\":{},\"hardlink_dups\":{},\"elapsed_ms\":{}}},\"tree\":",
         s.files, s.dirs, s.symlinks, s.errors, s.hardlink_dups, s.elapsed.as_millis()
     )?;
-    node_json(&mut w, tree, tree.root(), depth, min_size)?;
+    node_json(&mut w, tree, rules, tree.root(), depth, min_size)?;
+    write!(w, ",\"categories\":[")?;
+    for (i, t) in rules.totals(tree).iter().skip(1).enumerate() {
+        let c = rules
+            .category(t.category)
+            .expect("totals follow the categories");
+        if i > 0 {
+            write!(w, ",")?;
+        }
+        write!(w, "{{\"id\":")?;
+        json_str(&mut w, &c.id)?;
+        write!(w, ",\"name\":")?;
+        json_str(&mut w, &c.name)?;
+        write!(w, ",\"color\":")?;
+        json_str(&mut w, &c.color)?;
+        let cleanup = match c.cleanup {
+            Cleanup::Never => "never",
+            Cleanup::Review => "review",
+            Cleanup::Safe => "safe",
+        };
+        write!(
+            w,
+            ",\"cleanup\":\"{cleanup}\",\"files\":{},\"size\":{},\"alloc\":{}}}",
+            t.files, t.size, t.alloc
+        )?;
+    }
+    write!(w, "]")?;
     writeln!(w, "}}")?;
     w.flush()
 }
@@ -247,6 +343,7 @@ fn write_json(tree: &ScanTree, path: &PathBuf, depth: usize, min_size: u64) -> i
 fn node_json(
     w: &mut impl Write,
     tree: &ScanTree,
+    rules: &Rules,
     id: NodeId,
     depth: usize,
     min_size: u64,
@@ -265,6 +362,10 @@ fn node_json(
         ",\"kind\":\"{kind}\",\"size\":{},\"alloc\":{},\"files\":{},\"modified\":{},\"flags\":{}",
         n.size, n.alloc, n.files, n.modified, n.flags
     )?;
+    if let Some(c) = rules.category(n.category) {
+        write!(w, ",\"category\":")?;
+        json_str(w, &c.id)?;
+    }
     if n.is_dir() && n.child_count > 0 {
         if depth == 0 {
             write!(w, ",\"truncated\":true")?;
@@ -283,7 +384,7 @@ fn node_json(
                     write!(w, ",")?;
                 }
                 first = false;
-                node_json(w, tree, c, depth - 1, min_size)?;
+                node_json(w, tree, rules, c, depth - 1, min_size)?;
             }
             write!(w, "]")?;
             if hidden.0 > 0 {

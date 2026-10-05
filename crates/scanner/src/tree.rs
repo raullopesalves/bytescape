@@ -121,6 +121,11 @@ impl ScanTree {
         &self.errors
     }
 
+    /// Sets a node's category id (see [`Node::category`]).
+    pub fn set_category(&mut self, id: NodeId, category: u16) {
+        self.nodes[id as usize].category = category;
+    }
+
     /// Ids of the direct children of `id`, in name order.
     pub fn child_ids(&self, id: NodeId) -> Range<NodeId> {
         let n = self.node(id);
