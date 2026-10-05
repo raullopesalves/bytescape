@@ -2,10 +2,12 @@
 //! placeholders. Everything outside this module is portable.
 //!
 //! On Windows, folders are listed with `GetFileInformationByHandleEx`
-//! (`FileIdBothDirectoryInfo`), which returns every entry's file ID and
+//! (`FileIdExtdDirectoryInfo`), which returns every entry's file ID and
 //! allocated size in one call per folder. Hardlinks are then found by
-//! matching file IDs, without opening any file. If that call is not
-//! supported (some network or non-NTFS drives), the portable listing is used.
+//! matching file IDs, without opening any file. (`FileIdBothDirectoryInfo`
+//! also returns 8.3 short names; looking those up made it ~3x slower.) If
+//! that call is not supported (some network or non-NTFS drives), the
+//! portable listing is used.
 
 use std::fs::{self, Metadata};
 use std::io;
@@ -16,7 +18,7 @@ use crate::tree::NodeKind;
 
 /// Identifies one physical file across all its hardlinks: (volume, file id).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FileKey(pub u64, pub u64);
+pub struct FileKey(pub u64, pub u128);
 
 /// Per-scan facts about the volume being scanned.
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +26,10 @@ pub struct VolumeInfo {
     /// Allocation unit in bytes, used to round sizes up to size on disk.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub cluster: u64,
+    /// Volume serial number, the first half of every `FileKey`. A scan stays
+    /// on one volume: mount points are reparse points and are never followed.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub serial: Option<u64>,
 }
 
 /// One entry of a folder listing.
@@ -150,7 +156,10 @@ mod imp {
     use std::os::unix::fs::MetadataExt;
 
     pub fn volume_info(_root: &Path) -> VolumeInfo {
-        VolumeInfo { cluster: 4096 }
+        VolumeInfo {
+            cluster: 4096,
+            serial: None,
+        }
     }
 
     pub fn list_dir(
@@ -162,7 +171,7 @@ mod imp {
         list_dir_std(path, |_, md, e| {
             e.alloc = md.blocks() * 512;
             if hardlinks && md.nlink() > 1 {
-                e.key = Some(FileKey(md.dev(), md.ino()));
+                e.key = Some(FileKey(md.dev(), md.ino().into()));
             }
             // Far fewer blocks than its length means a sparse file.
             if md.len() > 0 && e.alloc + 4096 < md.len() {
@@ -177,7 +186,10 @@ mod imp {
     use super::*;
 
     pub fn volume_info(_root: &Path) -> VolumeInfo {
-        VolumeInfo { cluster: 4096 }
+        VolumeInfo {
+            cluster: 4096,
+            serial: None,
+        }
     }
 
     pub fn list_dir(
@@ -194,17 +206,19 @@ mod imp {
 pub(crate) mod imp {
     use super::*;
     use crate::tree::flags;
+    use std::cell::RefCell;
     use std::ffi::{OsStr, OsString};
     use std::fs::OpenOptions;
     use std::mem::offset_of;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        FileIdBothDirectoryInfo, GetCompressedFileSizeW, GetDiskFreeSpaceW,
-        GetFileInformationByHandle, GetFileInformationByHandleEx, GetVolumePathNameW,
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_ID_BOTH_DIR_INFO,
+        FileIdExtdDirectoryInfo, GetCompressedFileSizeW, GetDiskFreeSpaceW,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, GetVolumeInformationW,
+        GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO,
     };
 
     const ATTR_DIRECTORY: u32 = 0x0000_0010;
@@ -245,6 +259,7 @@ pub(crate) mod imp {
 
     pub fn volume_info(root: &Path) -> VolumeInfo {
         let mut cluster = 4096u64;
+        let mut serial = None;
         let name = wide(root);
         let mut vol = vec![0u16; 1024];
         // SAFETY: both buffers are valid for the lengths passed.
@@ -258,8 +273,26 @@ pub(crate) mod imp {
             if ok != 0 && spc > 0 && bps > 0 {
                 cluster = spc as u64 * bps as u64;
             }
+            let mut sn = 0u32;
+            // SAFETY: `vol` is NUL-terminated; `sn` is a valid out-param and
+            // the other outputs are null with zero length, which is allowed.
+            let ok = unsafe {
+                GetVolumeInformationW(
+                    vol.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    &mut sn,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            if ok != 0 {
+                serial = Some(sn as u64);
+            }
         }
-        VolumeInfo { cluster }
+        VolumeInfo { cluster, serial }
     }
 
     pub fn list_dir(
@@ -291,21 +324,23 @@ pub(crate) mod imp {
             .open(path)?;
         let handle = dir.as_raw_handle();
 
-        // File IDs are unique per volume; the folder's volume serial completes the key.
-        let serial = {
-            // SAFETY: zeroed is a valid bit pattern for this plain C struct.
-            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-            // SAFETY: `handle` is open for the lifetime of `dir`; `info` is valid.
-            if unsafe { GetFileInformationByHandle(handle, &mut info) } != 0 {
-                Some(info.dwVolumeSerialNumber as u64)
-            } else {
-                None
-            }
-        };
+        thread_local! {
+            // 64 KB, 8-byte aligned as the entries require. One per thread,
+            // reused for every folder that thread lists.
+            static BUF: RefCell<Vec<u64>> = RefCell::new(vec![0u64; 8 * 1024]);
+        }
+        BUF.with_borrow_mut(|buf| read_entries(path, handle, buf, vol, hardlinks))
+    }
 
+    /// Reads every entry of the open folder `handle` through `buf`.
+    fn read_entries(
+        path: &Path,
+        handle: HANDLE,
+        buf: &mut [u64],
+        vol: &VolumeInfo,
+        hardlinks: bool,
+    ) -> io::Result<Option<Listing>> {
         let mut listing = Listing::default();
-        // 64 KB, 8-byte aligned as the entries require.
-        let mut buf = vec![0u64; 8 * 1024];
         let buf_bytes = (buf.len() * 8) as u32;
         let mut first_call = true;
 
@@ -314,7 +349,7 @@ pub(crate) mod imp {
             let ok = unsafe {
                 GetFileInformationByHandleEx(
                     handle,
-                    FileIdBothDirectoryInfo,
+                    FileIdExtdDirectoryInfo,
                     buf.as_mut_ptr().cast(),
                     buf_bytes,
                 )
@@ -339,13 +374,13 @@ pub(crate) mod imp {
                 // SAFETY: the OS wrote a chain of entries into `buf`; `offset`
                 // follows its NextEntryOffset links, which stay inside the buffer.
                 let info = unsafe {
-                    std::ptr::read_unaligned(base.add(offset) as *const FILE_ID_BOTH_DIR_INFO)
+                    std::ptr::read_unaligned(base.add(offset) as *const FILE_ID_EXTD_DIR_INFO)
                 };
                 let name_len = info.FileNameLength as usize / 2;
                 // SAFETY: the name follows the fixed part of the entry, `name_len` units long.
                 let name16 = unsafe {
                     std::slice::from_raw_parts(
-                        base.add(offset + offset_of!(FILE_ID_BOTH_DIR_INFO, FileName))
+                        base.add(offset + offset_of!(FILE_ID_EXTD_DIR_INFO, FileName))
                             as *const u16,
                         name_len,
                     )
@@ -353,7 +388,7 @@ pub(crate) mod imp {
                 if name16 != [b'.' as u16] && name16 != [b'.' as u16, b'.' as u16] {
                     listing
                         .entries
-                        .push(entry_from_info(path, &info, name16, vol, hardlinks, serial));
+                        .push(entry_from_info(path, &info, name16, vol, hardlinks));
                 }
                 if info.NextEntryOffset == 0 {
                     break;
@@ -366,16 +401,14 @@ pub(crate) mod imp {
 
     fn entry_from_info(
         dir: &Path,
-        info: &FILE_ID_BOTH_DIR_INFO,
+        info: &FILE_ID_EXTD_DIR_INFO,
         name16: &[u16],
         vol: &VolumeInfo,
         hardlinks: bool,
-        serial: Option<u64>,
     ) -> Entry {
         let attrs = info.FileAttributes;
         let is_reparse = attrs & ATTR_REPARSE_POINT != 0;
-        // For reparse points, EaSize holds the reparse tag.
-        let surrogate = is_reparse && info.EaSize & TAG_NAME_SURROGATE != 0;
+        let surrogate = is_reparse && info.ReparsePointTag & TAG_NAME_SURROGATE != 0;
         let kind = if surrogate {
             NodeKind::Symlink
         } else if attrs & ATTR_DIRECTORY != 0 {
@@ -399,9 +432,11 @@ pub(crate) mod imp {
                 });
                 e.alloc = alloc;
                 e.flags = fl;
-                if hardlinks && info.FileId != 0 && fl & flags::CLOUD_PLACEHOLDER == 0 {
-                    if let Some(serial) = serial {
-                        e.key = Some(FileKey(serial, info.FileId as u64));
+                // 128-bit on ReFS; NTFS fills only the low 64 bits.
+                let id = u128::from_le_bytes(info.FileId.Identifier);
+                if hardlinks && id != 0 && fl & flags::CLOUD_PLACEHOLDER == 0 {
+                    if let Some(serial) = vol.serial {
+                        e.key = Some(FileKey(serial, id));
                     }
                 }
             }
@@ -490,7 +525,7 @@ pub(crate) mod imp {
         }
         let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
         Some((
-            FileKey(info.dwVolumeSerialNumber as u64, index),
+            FileKey(info.dwVolumeSerialNumber as u64, index.into()),
             info.nNumberOfLinks,
         ))
     }
