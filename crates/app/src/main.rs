@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod basket;
 mod search;
 mod treemap;
 
@@ -16,8 +17,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use basket::{Basket, Level, Method};
 use categories::{Cleanup, Rules};
-use scanner::{NodeId, NodeKind, Progress, ScanOptions, ScanTree};
+use scanner::{flags, NodeId, NodeKind, Progress, ScanOptions, ScanTree};
 use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -39,6 +41,7 @@ struct Session {
     search: Option<SearchState>,
     /// Bumped by every search, so the UI can't page through a stale one.
     generation: u64,
+    basket: Basket,
 }
 
 struct SearchState {
@@ -87,7 +90,11 @@ impl Row {
             modified: n.modified,
             category: n.category,
             flags: n.flags,
-            children: n.child_count,
+            // Deleted entries don't count.
+            children: tree
+                .child_ids(id)
+                .filter(|&c| !tree.node(c).has_flag(flags::REMOVED))
+                .count() as u32,
         }
     }
 }
@@ -215,7 +222,11 @@ fn children(state: State<AppState>, id: NodeId) -> Result<Vec<Row>, String> {
     if id as usize >= tree.len() {
         return Err(format!("No node {id}."));
     }
-    Ok(tree.child_ids(id).map(|c| Row::new(tree, c)).collect())
+    Ok(tree
+        .child_ids(id)
+        .filter(|&c| !tree.node(c).has_flag(flags::REMOVED))
+        .map(|c| Row::new(tree, c))
+        .collect())
 }
 
 #[tauri::command]
@@ -381,6 +392,267 @@ fn search_page(
         .collect())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BasketItem {
+    id: NodeId,
+    name: String,
+    path: String,
+    kind: &'static str,
+    size: u64,
+    level: Level,
+    reason: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BasketView {
+    items: Vec<BasketItem>,
+    /// Items that can be deleted, and their bytes (repeated hardlinks count 0).
+    count: usize,
+    bytes: u64,
+    blocked: usize,
+    danger: usize,
+}
+
+fn basket_view_of(s: &Session) -> BasketView {
+    let mut v = BasketView {
+        items: Vec::new(),
+        count: 0,
+        bytes: 0,
+        blocked: 0,
+        danger: 0,
+    };
+    for &id in s.basket.items() {
+        let a = basket::assess(&s.tree, &s.rules, &s.dominant, id);
+        let row = Row::new(&s.tree, id);
+        let size = effective_size(&s.tree, id);
+        match a.level {
+            Level::Blocked => v.blocked += 1,
+            level => {
+                v.count += 1;
+                v.bytes += size;
+                if level == Level::Danger {
+                    v.danger += 1;
+                }
+            }
+        }
+        v.items.push(BasketItem {
+            id,
+            name: row.name,
+            path: s.tree.path(id).display().to_string(),
+            kind: row.kind,
+            size: row.size,
+            level: a.level,
+            reason: a.reason,
+        });
+    }
+    v
+}
+
+/// Bytes deleting `id` gives back (0 for a repeated hardlink).
+fn effective_size(tree: &ScanTree, id: NodeId) -> u64 {
+    let n = tree.node(id);
+    if n.has_flag(flags::HARDLINK_DUP) {
+        0
+    } else {
+        n.size
+    }
+}
+
+fn with_basket(
+    state: &State<AppState>,
+    f: impl FnOnce(&mut Session),
+) -> Result<BasketView, String> {
+    let mut guard = state.session.lock().unwrap();
+    let s = guard.as_mut().ok_or("No scan yet.")?;
+    f(s);
+    Ok(basket_view_of(s))
+}
+
+#[tauri::command]
+fn basket_view(state: State<AppState>) -> Result<BasketView, String> {
+    with_basket(&state, |_| {})
+}
+
+#[tauri::command]
+fn basket_add(state: State<AppState>, ids: Vec<NodeId>) -> Result<BasketView, String> {
+    with_basket(&state, |s| {
+        for id in ids {
+            s.basket.add(&s.tree, id);
+        }
+    })
+}
+
+#[tauri::command]
+fn basket_remove(state: State<AppState>, ids: Vec<NodeId>) -> Result<BasketView, String> {
+    with_basket(&state, |s| {
+        for id in ids {
+            s.basket.remove(id);
+        }
+    })
+}
+
+#[tauri::command]
+fn basket_clear(state: State<AppState>) -> Result<BasketView, String> {
+    with_basket(&state, |s| s.basket.clear())
+}
+
+struct DeleteJob {
+    id: NodeId,
+    name: String,
+    path: PathBuf,
+    was_dir: bool,
+    size: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteProgress {
+    done: usize,
+    total: usize,
+    name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteFailure {
+    path: String,
+    error: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteDone {
+    deleted: usize,
+    bytes: u64,
+    recycled: bool,
+    failed: Vec<DeleteFailure>,
+    cancelled: bool,
+}
+
+/// Deletes everything in the basket that isn't blocked, on a background
+/// thread: `delete-progress` per item, then `delete-done`. Danger items need
+/// `confirmed_danger`. `cancel_scan` stops after the current item.
+#[tauri::command]
+fn delete_basket(
+    app: AppHandle,
+    state: State<AppState>,
+    permanent: bool,
+    confirmed_danger: bool,
+) -> Result<(), String> {
+    let mut busy = state.scanning.lock().unwrap();
+    if busy.is_some() {
+        return Err("Busy with a scan or another delete.".into());
+    }
+    let jobs =
+        {
+            let guard = state.session.lock().unwrap();
+            let s = guard.as_ref().ok_or("No scan yet.")?;
+            let mut jobs = Vec::new();
+            for &id in s.basket.items() {
+                match basket::assess(&s.tree, &s.rules, &s.dominant, id).level {
+                    Level::Blocked => continue,
+                    Level::Danger if !confirmed_danger => return Err(
+                        "Some items are system, program or OneDrive files; confirm those first."
+                            .into(),
+                    ),
+                    _ => {}
+                }
+                let n = s.tree.node(id);
+                jobs.push(DeleteJob {
+                    id,
+                    name: n.name.to_string(),
+                    path: s.tree.path(id),
+                    was_dir: n.kind == NodeKind::Dir,
+                    size: effective_size(&s.tree, id),
+                });
+            }
+            jobs
+        };
+    if jobs.is_empty() {
+        return Err("Nothing in the basket can be deleted.".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    *busy = Some(cancel.clone());
+    drop(busy);
+    let method = if permanent {
+        Method::Permanent
+    } else {
+        Method::RecycleBin
+    };
+    let owner = owner_window(&app);
+    thread::spawn(move || run_delete(app, jobs, method, owner, cancel));
+    Ok(())
+}
+
+/// The main window's handle, to own any dialog Windows shows while deleting.
+#[cfg(windows)]
+fn owner_window(app: &AppHandle) -> isize {
+    app.get_webview_window("main")
+        .and_then(|w| w.hwnd().ok())
+        .map_or(0, |h| h.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn owner_window(_app: &AppHandle) -> isize {
+    0
+}
+
+fn run_delete(
+    app: AppHandle,
+    jobs: Vec<DeleteJob>,
+    method: Method,
+    owner: isize,
+    cancel: Arc<AtomicBool>,
+) {
+    let state = app.state::<AppState>();
+    let total = jobs.len();
+    let mut done = DeleteDone {
+        deleted: 0,
+        bytes: 0,
+        recycled: method == Method::RecycleBin,
+        failed: Vec::new(),
+        cancelled: false,
+    };
+    for (k, job) in jobs.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            done.cancelled = true;
+            break;
+        }
+        let _ = app.emit(
+            "delete-progress",
+            DeleteProgress {
+                done: k,
+                total,
+                name: job.name.clone(),
+            },
+        );
+        match basket::delete(&job.path, job.was_dir, method, owner) {
+            Ok(()) => {
+                done.deleted += 1;
+                done.bytes += job.size;
+                if let Some(s) = state.session.lock().unwrap().as_mut() {
+                    s.tree.remove(job.id);
+                    s.basket.remove(job.id);
+                }
+            }
+            Err(error) => done.failed.push(DeleteFailure {
+                path: job.path.display().to_string(),
+                error,
+            }),
+        }
+    }
+    if let Some(s) = state.session.lock().unwrap().as_mut() {
+        s.dominant = treemap::dominant_categories(&s.tree, s.rules.categories().len());
+        // Old search results may point at deleted items.
+        s.generation += 1;
+        s.search = None;
+    }
+    *state.scanning.lock().unwrap() = None;
+    let _ = app.emit("delete-done", done);
+}
+
 /// Opens the file manager with this node selected.
 #[tauri::command]
 fn reveal(state: State<AppState>, id: NodeId) -> Result<(), String> {
@@ -458,6 +730,7 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
             rules_error,
             search: None,
             generation: 0,
+            basket: Basket::default(),
         }
     });
     let event = match outcome {
@@ -519,6 +792,11 @@ fn main() {
             search,
             search_page,
             clear_search,
+            basket_view,
+            basket_add,
+            basket_remove,
+            basket_clear,
+            delete_basket,
             reveal
         ])
         .run(tauri::generate_context!())

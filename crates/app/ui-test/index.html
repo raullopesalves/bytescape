@@ -21,6 +21,16 @@
       <section class="totals" id="totals"></section>
       <h2>By category</h2>
       <ul class="cats" id="cats"></ul>
+      <h2>Cleanup basket <span id="basket-count" class="count"></span></h2>
+      <p class="note" id="basket-empty">Right-click anything, or press B, to add it here. Nothing is deleted until you review it.</p>
+      <ul class="basket-items" id="basket-items"></ul>
+      <div class="basket-foot" id="basket-foot" hidden>
+        <div class="basket-total" id="basket-total"></div>
+        <div class="basket-actions">
+          <button id="basket-delete" class="danger-btn">Review and delete…</button>
+          <button id="basket-clear" class="link">Empty basket</button>
+        </div>
+      </div>
       <p class="note" id="rules-note"></p>
     </aside>
 
@@ -97,5 +107,14 @@
     <span id="selpath" class="selpath"></span>
     <button id="reveal" class="link" hidden>Show in Explorer</button>
   </footer>
+  <div class="menu" id="menu" role="menu" hidden></div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title"></h2>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
 </body>
 </html>

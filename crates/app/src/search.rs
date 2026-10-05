@@ -133,6 +133,9 @@ impl<'a> Matcher<'a> {
     }
 
     fn matches(&self, n: &Node) -> bool {
+        if n.has_flag(flags::REMOVED) {
+            return false;
+        }
         match n.kind {
             NodeKind::File => {}
             NodeKind::Dir if self.f.folders && self.extensions.is_empty() => {}

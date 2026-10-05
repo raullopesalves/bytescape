@@ -48,6 +48,66 @@ function runSearch(f) {
   return { generation, count: hits.length, bytes, millis: 0 };
 }
 
+// Cleanup basket. Fake assessments: the root is blocked, a folder named "c"
+// counts as a system folder, Documents is "never", Caches is "safe".
+// Deleting "b.txt" fails, to show the error report.
+let basketItems = [];
+const below = (id, folder) => { for (let n = byId.get(id); n.id !== 0;) { n = byId.get(n.parent); if (n.id === folder) return true; } return false; };
+function assess(n) {
+  if (n.id === 0) return ['blocked', 'This is the folder you scanned. Pick what is inside it instead.'];
+  if (n.name === 'c') return ['danger', 'Part of Windows or an installed program. Deleting it can break Windows or apps.'];
+  if (n.category === 1) return ['warn', 'Documents, which is usually kept.'];
+  if (n.category === 2) return ['safe', 'Usually safe to clean.'];
+  return ['ok', null];
+}
+function basketView() {
+  const v = { items: [], count: 0, bytes: 0, blocked: 0, danger: 0 };
+  for (const id of basketItems) {
+    const n = byId.get(id);
+    const [level, reason] = assess(n);
+    if (level === 'blocked') v.blocked += 1; else { v.count += 1; v.bytes += n.size; }
+    if (level === 'danger') v.danger += 1;
+    v.items.push({ id, name: n.name, path: chain(id).map(([, name]) => name).join('\\'), kind: n.kind, size: n.size, level, reason });
+  }
+  return v;
+}
+function removeNode(id) {
+  const n = byId.get(id);
+  const files = n.kind === 'file' ? 1 : n.files;
+  for (let p = byId.get(n.parent); ; p = byId.get(p.parent)) {
+    p.size -= n.size; p.alloc -= n.size; p.files -= files;
+    if (p.id === 0) break;
+  }
+  byId.get(n.parent).children -= 1;
+  const gone = new Set([id]);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const m of nodes) if (m.id !== 0 && !gone.has(m.id) && gone.has(m.parent)) { gone.add(m.id); changed = true; }
+  }
+  for (let k = nodes.length - 1; k >= 0; k--) if (gone.has(nodes[k].id)) { byId.delete(nodes[k].id); nodes.splice(k, 1); }
+}
+async function deleteBasket({ permanent, confirmedDanger }) {
+  const jobs = basketItems.filter((id) => assess(byId.get(id))[0] !== 'blocked');
+  if (!confirmedDanger && jobs.some((id) => assess(byId.get(id))[0] === 'danger')) throw new Error('Some items are system, program or OneDrive files; confirm those first.');
+  if (jobs.length === 0) throw new Error('Nothing in the basket can be deleted.');
+  setTimeout(async () => {
+    const done = { deleted: 0, bytes: 0, recycled: !permanent, failed: [], cancelled: false };
+    for (const [k, id] of jobs.entries()) {
+      const n = byId.get(id);
+      handlers['delete-progress']?.({ payload: { done: k, total: jobs.length, name: n.name } });
+      await new Promise((r) => setTimeout(r, 30));
+      if (n.name === 'b.txt') { done.failed.push({ path: chain(id).map(([, x]) => x).join('\\'), error: "It's in use by another program." }); continue; }
+      done.deleted += 1; done.bytes += n.size;
+      removeNode(id);
+      basketItems = basketItems.filter((b) => b !== id);
+    }
+    basketItems = basketItems.filter((b) => byId.has(b));
+    searchState = null;
+    handlers['delete-done']?.({ payload: done });
+  }, 20);
+  return null;
+}
+
 function chain(id) {
   const out = [];
   for (let n = byId.get(id); ; n = byId.get(n.parent)) {
@@ -111,6 +171,17 @@ window.__TAURI__ = {
           return searchState.ids.slice(args.offset, args.offset + args.limit)
             .map((id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, name]) => name).join('\\') }));
         }
+        case 'basket_view': return basketView();
+        case 'basket_add':
+          for (const id of args.ids) {
+            if (id === 0 || basketItems.includes(id) || basketItems.some((b) => below(id, b))) continue;
+            basketItems = basketItems.filter((b) => !below(b, id)).concat(id);
+          }
+          return basketView();
+        case 'basket_remove': basketItems = basketItems.filter((b) => !args.ids.includes(b)); return basketView();
+        case 'basket_clear': basketItems = []; return basketView();
+        case 'delete_basket': return deleteBasket(args);
+        case 'cancel_scan': return null;
         default: return null;
       }
     },

@@ -36,6 +36,9 @@ pub mod flags {
     pub const SPARSE: u8 = 1 << 4;
     /// The folder could not be listed (fully or partly); its totals are incomplete.
     pub const READ_ERROR: u8 = 1 << 5;
+    /// Deleted after the scan (see [`ScanTree::remove`](crate::ScanTree::remove)):
+    /// sizes are zero and the node should be hidden.
+    pub const REMOVED: u8 = 1 << 6;
 }
 
 /// One file, folder, link or error entry.
@@ -126,6 +129,61 @@ impl ScanTree {
         self.nodes[id as usize].category = category;
     }
 
+    /// Records that `id` and everything below it were deleted: they are
+    /// marked [`flags::REMOVED`] with zero sizes, and their bytes and counts
+    /// are subtracted from every ancestor and from the stats. The nodes stay
+    /// in the arena so ids don't change. Returns `false` (and does nothing)
+    /// for the root or an already removed node.
+    ///
+    /// If the removed part held the counted link of a hardlinked file whose
+    /// other links remain, those stay marked as duplicates until a rescan.
+    pub fn remove(&mut self, id: NodeId) -> bool {
+        let n = &self.nodes[id as usize];
+        if id == self.root() || n.has_flag(flags::REMOVED) {
+            return false;
+        }
+        // What the subtree adds to its parent (a duplicate link adds nothing).
+        let (size, alloc, files) = if n.has_flag(flags::HARDLINK_DUP) {
+            (0, 0, 0)
+        } else {
+            (n.size, n.alloc, n.files)
+        };
+        let root = self.root();
+        let mut cur = n.parent;
+        loop {
+            let a = &mut self.nodes[cur as usize];
+            a.size -= size;
+            a.alloc -= alloc;
+            a.files -= files;
+            if cur == root {
+                break;
+            }
+            cur = a.parent;
+        }
+
+        let mut stack = vec![id];
+        while let Some(i) = stack.pop() {
+            stack.extend(self.child_ids(i));
+            let n = &mut self.nodes[i as usize];
+            match n.kind {
+                NodeKind::File => {
+                    self.stats.files -= 1;
+                    if n.has_flag(flags::HARDLINK_DUP) {
+                        self.stats.hardlink_dups -= 1;
+                    }
+                }
+                NodeKind::Dir => self.stats.dirs -= 1,
+                NodeKind::Symlink => self.stats.symlinks -= 1,
+                NodeKind::Error => self.stats.errors = self.stats.errors.saturating_sub(1),
+            }
+            n.flags |= flags::REMOVED;
+            n.size = 0;
+            n.alloc = 0;
+            n.files = 0;
+        }
+        true
+    }
+
     /// Ids of the direct children of `id`, in name order.
     pub fn child_ids(&self, id: NodeId) -> Range<NodeId> {
         let n = self.node(id);
@@ -174,7 +232,9 @@ impl ScanTree {
         }
         let mut heap: BinaryHeap<Reverse<(u64, NodeId)>> = BinaryHeap::with_capacity(n + 1);
         for (i, node) in self.nodes.iter().enumerate() {
-            if node.kind != NodeKind::File || node.has_flag(flags::HARDLINK_DUP) {
+            if node.kind != NodeKind::File
+                || node.flags & (flags::HARDLINK_DUP | flags::REMOVED) != 0
+            {
                 continue;
             }
             heap.push(Reverse((node.size, i as NodeId)));

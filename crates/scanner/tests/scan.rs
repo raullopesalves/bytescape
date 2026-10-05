@@ -267,3 +267,41 @@ fn bad_roots_are_errors() {
         Err(ScanError::Root(_))
     ));
 }
+
+#[test]
+fn removed_subtrees_leave_the_totals() {
+    let dir = fixture();
+    let mut tree = scan(dir.path(), &ScanOptions::default()).unwrap();
+    let (a, b, c) = (find(&tree, "a"), find(&tree, "a/b"), find(&tree, "c"));
+    let two = find(&tree, "a/b/two.bin");
+    let before = tree.stats().clone();
+    let root_size = tree.node(tree.root()).size;
+
+    assert!(tree.remove(b));
+    assert_eq!(tree.node(tree.root()).size, root_size - 5000);
+    assert_eq!(tree.node(a).size, 1000);
+    assert_eq!(tree.node(a).files, 1);
+    assert!(tree.node(two).has_flag(flags::REMOVED));
+    assert_eq!(tree.node(two).size, 0);
+    assert_eq!(tree.stats().files, before.files - 1);
+    assert_eq!(tree.stats().dirs, before.dirs - 1);
+    assert!(!tree.largest_files(10).contains(&two));
+    assert!(!tree.remove(b), "already removed");
+    assert!(!tree.remove(two), "inside a removed folder");
+    assert!(!tree.remove(tree.root()));
+
+    // c holds empty.bin and one link of a hardlinked file.
+    let hard_is_dup = tree
+        .node(find(&tree, "c/hard.bin"))
+        .has_flag(flags::HARDLINK_DUP);
+    let c_files = tree.node(c).files;
+    let files = tree.node(tree.root()).files;
+    assert!(tree.remove(c));
+    assert_eq!(tree.node(tree.root()).files, files - c_files);
+    assert_eq!(tree.stats().files, before.files - 3);
+    assert_eq!(
+        tree.stats().hardlink_dups,
+        before.hardlink_dups - u64::from(hard_is_dup)
+    );
+    assert_eq!(tree.node(tree.root()).size, tree.node(a).size + 10);
+}

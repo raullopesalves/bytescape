@@ -4,12 +4,29 @@
 //        | send <Method> '<json params>'   (any protocol call, e.g. Emulation.setEmulatedMedia)
 import { writeFileSync } from 'node:fs';
 const targets = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9222}/json`)).json();
-const page = targets.find(t => t.type === 'page' && /^(file|http)/.test(t.url));
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise(r => ws.addEventListener('open', r, { once: true }));
-let n = 0; const pending = new Map();
-ws.addEventListener('message', e => { const m = JSON.parse(e.data); if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
-const send = (method, params = {}) => new Promise(r => { const id = ++n; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+const pages = targets.filter(t => t.type === 'page' && /^(file|http)/.test(t.url));
+
+async function connect(page) {
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise(r => ws.addEventListener('open', r, { once: true }));
+  let n = 0; const pending = new Map();
+  ws.addEventListener('message', e => { const m = JSON.parse(e.data); if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
+  const send = (method, params = {}) => new Promise(r => { const id = ++n; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  return { ws, send };
+}
+
+// With several app windows open, CDP_PICK is a JS expression that is true
+// only in the wanted page, e.g. "summary?.root.name.includes('scratch')".
+let conn = null;
+for (const page of pages) {
+  const c = await connect(page);
+  if (!process.env.CDP_PICK) { conn = c; break; }
+  const r = await c.send('Runtime.evaluate', { expression: process.env.CDP_PICK, returnByValue: true });
+  if (r.result?.result?.value === true) { conn = c; break; }
+  c.ws.close();
+}
+if (!conn) { console.error('no matching page'); process.exit(1); }
+const { ws, send } = conn;
 const [cmd, a, b, c] = process.argv.slice(2);
 if (cmd === 'eval') {
   const r = await send('Runtime.evaluate', { expression: a, awaitPromise: true, returnByValue: true });

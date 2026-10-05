@@ -126,6 +126,9 @@ async function loadResult() {
   visible = [{ row: root, depth: 0, parentSize: root.size }];
   selected = 0;
   search = null;
+  basket = EMPTY_BASKET;
+  basketIds = new Set();
+  renderBasket();
   resetFilters();
   $('f-cat').innerHTML = '<option value="">All categories</option>' + [...summary.categories]
     .filter((c) => c.files > 0)
@@ -303,7 +306,8 @@ function rowHtml(i) {
   const catCell = cat
     ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}`
     : '';
-  const tagHtml = tags.length ? `<span class="tag">${tags.join(', ')}</span>` : '';
+  const tagHtml = (tags.length ? `<span class="tag">${tags.join(', ')}</span>` : '')
+    + (basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : '');
 
   return `<div class="${cls.join(' ')}" data-i="${i}" role="treeitem" aria-level="${depth + 1}"${r.kind === 'dir' && r.children > 0 ? ` aria-expanded="${open}"` : ''}>
     <div class="name-cell" style="padding-left:${4 + depth * 16}px"><span class="twisty">${twisty}</span><span class="label" title="${esc(r.name)}">${esc(r.name)}</span>${tagHtml}</div>
@@ -388,6 +392,7 @@ function onKey(e) {
       else select(parentIndex(selected));
       break;
     case 'Enter': toggle(selected); break;
+    case 'b': case 'B': case 'Delete': basketToggle(v.row.id); break;
     default: return;
   }
   e.preventDefault();
@@ -530,6 +535,12 @@ function drawOverlay() {
     ctx.strokeStyle = color;
     ctx.strokeRect(map.x[i] + lw / 2, map.y[i] + lw / 2, Math.max(0, map.w[i] - lw), Math.max(0, map.h[i] - lw));
   };
+  ctx.setLineDash([4 * dpr, 3 * dpr]);
+  for (const id of basketIds) {
+    const r = map.index.get(id);
+    if (r !== undefined && r > 0) outline(r, '#e0a030', 1.5);
+  }
+  ctx.setLineDash([]);
   // Outlining the whole map (the zoomed-in folder) would just frame it.
   const sel = selectedRect();
   if (sel > 0) {
@@ -745,7 +756,7 @@ function resultHtml(i) {
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
-    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span><span class="tag">${esc(parent)}</span></div>
+    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span><span class="tag">${esc(parent)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
     <div class="num">${human(r.alloc)}</div>
@@ -821,6 +832,7 @@ function onResultsKey(e) {
     case 'Home': selectResult(0); break;
     case 'End': selectResult(s.count - 1); break;
     case 'Enter': showInTree(at); break;
+    case 'b': case 'B': case 'Delete': basketToggle(currentId()); break;
     default: return;
   }
   e.preventDefault();
@@ -829,6 +841,200 @@ function onResultsKey(e) {
 /** Id of the selected node in whichever list is showing. */
 function currentId() {
   return view === 'results' ? search?.items[search.sel]?.row.id : visible[selected]?.row.id;
+}
+
+// ---------- cleanup basket ----------
+
+const EMPTY_BASKET = { items: [], count: 0, bytes: 0, blocked: 0, danger: 0 };
+let basket = EMPTY_BASKET;
+let basketIds = new Set();
+
+function setBasket(v) {
+  basket = v;
+  basketIds = new Set(v.items.map((it) => it.id));
+  renderBasket();
+  render();
+  drawOverlay();
+}
+
+/** Adds the node to the basket, or takes it out if it's in. */
+async function basketToggle(id) {
+  if (id === undefined || !summary) return;
+  if (id === summary.root.id) {
+    setStatus("The scanned folder itself can't go in the basket; pick what's inside it.");
+    return;
+  }
+  const removing = basketIds.has(id);
+  try {
+    setBasket(await invoke(removing ? 'basket_remove' : 'basket_add', { ids: [id] }));
+  } catch (e) {
+    setStatus(String(e), true);
+    return;
+  }
+  if (removing) setStatus('Taken out of the cleanup basket.');
+  else if (basketIds.has(id)) setStatus(`Added ${basket.items.find((it) => it.id === id).name} to the cleanup basket.`);
+  else setStatus('Already in the basket, as part of a folder.');
+}
+
+function renderBasket() {
+  const b = basket;
+  $('basket-count').textContent = b.items.length ? `(${b.items.length})` : '';
+  $('basket-empty').hidden = b.items.length > 0;
+  $('basket-foot').hidden = b.items.length === 0;
+  $('basket-items').innerHTML = b.items.map((it) => `<li class="lvl-${it.level}" data-id="${it.id}" title="${esc(it.path)}">
+      <div class="b-head"><span class="b-dot"></span><span class="b-name">${esc(it.name)}</span>
+        <span class="b-size">${human(it.size)}</span><button class="b-x" data-remove="${it.id}" title="Take out of the basket" aria-label="Take ${esc(it.name)} out of the basket">×</button></div>
+      ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
+    </li>`).join('');
+  $('basket-total').textContent = b.count
+    ? `${plural(b.count, 'item')} · ${human(b.bytes)}`
+    : 'Nothing here can be deleted.';
+  $('basket-delete').disabled = b.count === 0;
+}
+
+// Context menu on tree rows, results and treemap blocks.
+function openMenu(e, id, { zoomId, showInTree } = {}) {
+  e.preventDefault();
+  if (id === undefined) return;
+  const actions = [
+    [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)],
+    ['Show in Explorer', () => invoke('reveal', { id }).catch((err) => setStatus(String(err), true))],
+  ];
+  if (showInTree) actions.push(['Show in tree', () => { setView('tree'); revealInTree(id); }]);
+  if (zoomId !== undefined && zoomId >= 0) actions.push(['Zoom treemap here', () => zoomTo(zoomId)]);
+  const menu = $('menu');
+  menu.innerHTML = actions.map(([label], k) => `<button role="menuitem" data-k="${k}">${label}</button>`).join('');
+  menu.onclick = (ev) => {
+    const k = ev.target.closest('[data-k]')?.dataset.k;
+    closeMenu();
+    if (k !== undefined) actions[Number(k)][1]();
+  };
+  menu.hidden = false;
+  const x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 4);
+  const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 4);
+  menu.style.left = `${Math.max(0, x)}px`;
+  menu.style.top = `${Math.max(0, y)}px`;
+  menu.querySelector('button').focus();
+}
+
+function closeMenu() {
+  $('menu').hidden = true;
+}
+
+// ----- deleting -----
+
+function modal(title, body, actions) {
+  $('modal-title').textContent = title;
+  $('modal-body').innerHTML = body;
+  $('modal-actions').innerHTML = actions.map(([label, cls], k) => `<button class="${cls || ''}" data-k="${k}">${label}</button>`).join('');
+  $('modal-actions').onclick = (e) => {
+    const k = e.target.closest('[data-k]')?.dataset.k;
+    if (k !== undefined) actions[Number(k)][2]();
+  };
+  $('modal').hidden = false;
+}
+
+function closeModal() {
+  $('modal').hidden = true;
+}
+
+function openDeleteDialog() {
+  const b = basket;
+  const go = b.items.filter((it) => it.level !== 'blocked');
+  const kept = b.items.filter((it) => it.level === 'blocked');
+  if (go.length === 0) return;
+  const item = (it) => `<li class="lvl-${it.level}">
+      <div class="b-head"><span class="b-dot"></span><span class="b-name">${esc(it.name)}</span><span class="b-size">${human(it.size)}</span></div>
+      <div class="b-path">${esc(it.path)}</div>
+      ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
+    </li>`;
+  const body = `
+    <ul class="confirm-list">${go.map(item).join('')}</ul>
+    ${kept.length ? `<p class="note">Won't be deleted: ${kept.map((it) => esc(it.name)).join(', ')}.</p>` : ''}
+    <fieldset class="method">
+      <label><input type="radio" name="method" value="recycle" checked> <span>Move to the Recycle Bin
+        <span class="note">(recommended: you can restore them; the space comes back when the bin is emptied)</span></span></label>
+      <label><input type="radio" name="method" value="permanent"> <span>Delete permanently
+        <span class="note">(can't be undone)</span></span></label>
+    </fieldset>
+    <label class="ack" id="ack-perm-row" hidden><input type="checkbox" id="ack-perm"> I understand these can't be recovered.</label>
+    ${b.danger ? '<label class="ack danger"><input type="checkbox" id="ack-danger"> I understand some of these are system, program or OneDrive files.</label>' : ''}`;
+  modal(`Delete ${plural(b.count, 'item')} (${human(b.bytes)})?`, body, [
+    ['Cancel', '', closeModal],
+    ['Move to Recycle Bin', 'danger-btn', startDelete],
+  ]);
+  const update = () => {
+    const permanent = document.querySelector('input[name=method]:checked').value === 'permanent';
+    $('ack-perm-row').hidden = !permanent;
+    const ok = (!permanent || $('ack-perm').checked) && (!b.danger || $('ack-danger').checked);
+    const goBtn = $('modal-actions').children[1];
+    goBtn.textContent = permanent ? 'Delete permanently' : 'Move to Recycle Bin';
+    goBtn.disabled = !ok;
+  };
+  $('modal-body').onchange = update;
+  update();
+}
+
+async function startDelete() {
+  const permanent = document.querySelector('input[name=method]:checked').value === 'permanent';
+  const confirmedDanger = !!$('ack-danger')?.checked;
+  try {
+    await invoke('delete_basket', { permanent, confirmedDanger });
+  } catch (e) {
+    modal('Nothing was deleted', `<p>${esc(String(e))}</p>`, [['Close', '', closeModal]]);
+    return;
+  }
+  setScanning(true);
+  modal(permanent ? 'Deleting…' : 'Moving to the Recycle Bin…', '<p id="del-progress">Starting…</p>', [
+    ['Stop after this item', '', () => invoke('cancel_scan')],
+  ]);
+}
+
+listen('delete-progress', (e) => {
+  const p = e.payload;
+  const el = $('del-progress');
+  if (el) el.textContent = `${p.done + 1} of ${p.total}: ${p.name}`;
+});
+
+listen('delete-done', async (e) => {
+  const d = e.payload;
+  setScanning(false);
+  const verb = d.recycled ? 'Moved' : 'Deleted';
+  const where = d.recycled ? ' to the Recycle Bin. Empty it to get the space back.' : '.';
+  let body = `<p>${verb} ${plural(d.deleted, 'item')} (${human(d.bytes)})${d.deleted ? where : '.'}</p>`;
+  if (d.cancelled) body += '<p class="note">Stopped before the end; the rest is still in the basket.</p>';
+  if (d.failed.length) {
+    body += `<p>${plural(d.failed.length, 'item')} couldn't be deleted and stayed in the basket:</p>
+      <ul class="fail-list">${d.failed.map((f) => `<li>${esc(f.path)}: ${esc(f.error)}</li>`).join('')}</ul>`;
+  }
+  modal(d.failed.length ? 'Done, with problems' : 'Done', body, [['Close', 'primary', closeModal]]);
+  await refreshAfterDelete();
+});
+
+/** Reloads totals, tree, basket, search and treemap after a delete. */
+async function refreshAfterDelete() {
+  summary = await invoke('summary');
+  cats = new Map(summary.categories.map((c) => [c.id, c]));
+  renderSide();
+  const kept = expanded;
+  cache = new Map();
+  for (const id of kept) {
+    try {
+      const kids = await invoke('children', { id });
+      sortRows(kids);
+      cache.set(id, kids);
+    } catch {
+      // gone with its parent
+    }
+  }
+  expanded = new Set([...kept].filter((id) => cache.has(id)));
+  visible = [{ row: summary.root, depth: 0, parentSize: summary.root.size }];
+  rebuild();
+  map.details = new Map();
+  setBasket(await invoke('basket_view'));
+  if (search) await applyFilters();
+  else await layoutMap();
+  if (view === 'tree') select(selected);
 }
 
 // ---------- wiring ----------
@@ -876,6 +1082,49 @@ $('viewbar').addEventListener('click', (e) => {
   const v = e.target.closest('[data-view]')?.dataset.view;
   if (v) setView(v);
 });
+$('basket-items').addEventListener('click', (e) => {
+  const rm = e.target.closest('[data-remove]')?.dataset.remove;
+  if (rm !== undefined) {
+    basketToggle(Number(rm));
+    return;
+  }
+  const id = e.target.closest('li[data-id]')?.dataset.id;
+  if (id !== undefined) {
+    setView('tree');
+    revealInTree(Number(id));
+  }
+});
+$('basket-delete').addEventListener('click', openDeleteDialog);
+$('basket-clear').addEventListener('click', async () => setBasket(await invoke('basket_clear')));
+
+$('rows').addEventListener('contextmenu', (e) => {
+  const el = e.target.closest('.row');
+  if (!el) return;
+  const i = Number(el.dataset.i);
+  if (view === 'results') {
+    selectResult(i);
+    const r = search?.items[i]?.row;
+    openMenu(e, r?.id, { showInTree: true, zoomId: r?.kind === 'dir' ? r.id : undefined });
+  } else {
+    select(i);
+    const r = visible[i].row;
+    openMenu(e, r.id, { zoomId: r.kind === 'dir' ? r.id : undefined });
+  }
+});
+document.addEventListener('mousedown', (e) => {
+  if (!$('menu').contains(e.target)) closeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeMenu();
+  // Not while a delete is running (the toolbar's Cancel button shows then).
+  if (!$('modal').hidden && $('cancel').hidden) closeModal();
+});
+// The browser's own menu is no use here, except in text fields.
+document.addEventListener('contextmenu', (e) => {
+  if (!e.target.closest('input')) e.preventDefault();
+});
+
 $('cats').addEventListener('click', (e) => {
   const li = e.target.closest('li[data-id]');
   if (!li) return;
@@ -906,6 +1155,12 @@ overlay.addEventListener('click', (e) => {
   if (i < 0) return;
   setView('tree');
   revealInTree(map.id[i]);
+});
+overlay.addEventListener('contextmenu', (e) => {
+  const { i } = eventRect(e);
+  if (i < 0) return;
+  showTip(-1);
+  openMenu(e, map.id[i], { showInTree: true, zoomId: zoomTarget(i) });
 });
 overlay.addEventListener('dblclick', (e) => {
   const { i } = eventRect(e);

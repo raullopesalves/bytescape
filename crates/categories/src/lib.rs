@@ -333,7 +333,7 @@ impl Rules {
             })
             .collect();
         for n in tree.nodes() {
-            if n.kind != NodeKind::File || n.has_flag(flags::HARDLINK_DUP) {
+            if n.kind != NodeKind::File || n.flags & (flags::HARDLINK_DUP | flags::REMOVED) != 0 {
                 continue;
             }
             if let Some(t) = out.get_mut(n.category as usize) {
