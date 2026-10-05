@@ -108,6 +108,9 @@ pub fn assess(tree: &ScanTree, rules: &Rules, dominant: &[u16], id: NodeId) -> A
     }
 
     let path = tree.path(id).display().to_string();
+    if in_recycle_bin(&path) {
+        return block("This is in the Recycle Bin. Empty it from Windows instead.");
+    }
     let danger = |r: &str| Assessment {
         level: Level::Danger,
         reason: Some(r.into()),
@@ -181,6 +184,16 @@ fn is_system_path(path: &str) -> bool {
         || FILES.contains(&rest.as_str())
 }
 
+/// The Recycle Bin folder at a drive's root, or anything in it.
+fn in_recycle_bin(path: &str) -> bool {
+    let p = path.strip_prefix(r"\\?\").unwrap_or(path);
+    p.get(1..3) == Some(":\\")
+        && p.get(3..).is_some_and(|rest| {
+            let rest = rest.to_lowercase();
+            rest == "$recycle.bin" || rest.starts_with("$recycle.bin\\")
+        })
+}
+
 /// Inside a OneDrive folder ("OneDrive", "OneDrive - Company", ...).
 fn in_onedrive(path: &str) -> bool {
     path.split(['\\', '/'])
@@ -196,6 +209,44 @@ fn has_placeholder_below(tree: &ScanTree, id: NodeId) -> bool {
         stack.extend(tree.child_ids(i));
     }
     false
+}
+
+/// Items worth suggesting for cleanup: the topmost nodes in a `safe`
+/// category (a folder's contents come with it), leaving out anything rated
+/// danger or blocked. Returns the `limit` largest, with the count and bytes
+/// of all of them.
+pub fn cleanup_candidates(
+    tree: &ScanTree,
+    rules: &Rules,
+    dominant: &[u16],
+    limit: usize,
+) -> (Vec<NodeId>, usize, u64) {
+    let safe = |c: u16| {
+        rules
+            .category(c)
+            .is_some_and(|c| c.cleanup == Cleanup::Safe)
+    };
+    let root = tree.root();
+    let mut found: Vec<(u64, NodeId)> = Vec::new();
+    for (i, n) in tree.nodes().iter().enumerate().skip(1) {
+        if n.flags & (flags::REMOVED | flags::HARDLINK_DUP) != 0 || n.size == 0 || !safe(n.category)
+        {
+            continue;
+        }
+        // Inside a safe folder: that folder is the candidate instead.
+        if n.parent != root && safe(tree.node(n.parent).category) {
+            continue;
+        }
+        let id = i as NodeId;
+        if assess(tree, rules, dominant, id).level < Level::Danger {
+            found.push((n.size, id));
+        }
+    }
+    found.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let total = found.iter().map(|f| f.0).sum();
+    let count = found.len();
+    found.truncate(limit);
+    (found.into_iter().map(|f| f.1).collect(), count, total)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -403,8 +454,53 @@ mod tests {
         assert!(!is_system_path(r"C:\WindowsApps-backup"));
         assert!(!is_system_path(r"C:\Users\r\Windows"));
         assert!(!is_system_path(r"C:\Users\r\pagefile.sys"));
+        assert!(in_recycle_bin(r"D:\$Recycle.Bin"));
+        assert!(in_recycle_bin(r"C:\$RECYCLE.BIN\S-1-5-21\$R1.txt"));
+        assert!(!in_recycle_bin(r"C:\Users\r\$Recycle.Bin"));
         assert!(in_onedrive(r"C:\Users\r\OneDrive - Work\a.docx"));
         assert!(!in_onedrive(r"C:\Users\r\Documents\a.docx"));
+    }
+
+    #[test]
+    fn cleanup_candidates_are_topmost_and_not_risky() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        fs::create_dir_all(r.join("junk/deeper")).unwrap();
+        fs::create_dir_all(r.join("work")).unwrap();
+        fs::create_dir_all(r.join("OneDrive/stuff")).unwrap();
+        fs::write(r.join("junk/a.tmp"), vec![0u8; 300]).unwrap();
+        fs::write(r.join("junk/deeper/b.tmp"), vec![0u8; 200]).unwrap();
+        fs::write(r.join("work/c.tmp"), vec![0u8; 100]).unwrap();
+        fs::write(r.join("work/keep.jpg"), vec![0u8; 900]).unwrap();
+        fs::write(r.join("top.tmp"), vec![0u8; 50]).unwrap();
+        fs::write(r.join("OneDrive/stuff/d.tmp"), vec![0u8; 999]).unwrap();
+        // Rules where the "junk" folder is a safe category by path.
+        let text = r#"
+            [[category]]
+            id = "temp"
+            name = "Temp"
+            cleanup = "safe"
+            paths = ["**/junk/**"]
+            extensions = ["tmp"]
+
+            [[category]]
+            id = "pictures"
+            name = "Pictures"
+            cleanup = "never"
+            extensions = ["jpg"]
+        "#;
+        let rules = Rules::load(&[("test rules", text)]).unwrap();
+        let mut tree = scanner::scan(r, &scanner::ScanOptions::default()).unwrap();
+        rules.apply(&mut tree);
+        let dom = crate::treemap::dominant_categories(&tree, rules.categories().len());
+
+        let (ids, count, bytes) = cleanup_candidates(&tree, &rules, &dom, 10);
+        let names: Vec<&str> = ids.iter().map(|&i| &*tree.node(i).name).collect();
+        // junk (500 B) covers its contents; OneDrive's file is left out.
+        assert_eq!(names, ["junk", "c.tmp", "top.tmp"]);
+        assert_eq!((count, bytes), (3, 650));
+        let (ids, count, _) = cleanup_candidates(&tree, &rules, &dom, 1);
+        assert_eq!((ids.len(), count), (1, 3));
     }
 
     #[test]

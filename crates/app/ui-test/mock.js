@@ -152,7 +152,8 @@ window.__TAURI__ = {
   core: {
     invoke: async (cmd, args) => {
       switch (cmd) {
-        case 'initial_path': return 'X:\\demo';
+        // index.html?start shows the start screen instead of scanning at once.
+        case 'initial_path': return location.search.includes('start') ? null : 'X:\\demo';
         case 'start_scan': setTimeout(() => handlers['scan-done']?.({ payload: null }), 50); return null;
         case 'summary': return {
           root: byId.get(0), files: 7, dirs: 4, links: 0, errors: 0,
@@ -182,6 +183,21 @@ window.__TAURI__ = {
         case 'basket_clear': basketItems = []; return basketView();
         case 'delete_basket': return deleteBasket(args);
         case 'cancel_scan': return null;
+        // Overview: "big.bin" (Caches, safe) is the one suggestion.
+        case 'overview': {
+          const d = (id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, x]) => x).join('\\') });
+          const safe = nodes.filter((n) => n.category === 2 && n.kind === 'file');
+          const files = nodes.filter((n) => n.kind === 'file').sort((a, b) => b.size - a.size).slice(0, 10);
+          return { safeCount: safe.length, safeBytes: safe.reduce((t, n) => t + n.size, 0), safeItems: safe.map((n) => d(n.id)), largestFiles: files.map((n) => d(n.id)) };
+        }
+        case 'basket_add_suggested':
+          for (const n of nodes.filter((m) => m.category === 2 && m.kind === 'file')) if (!basketItems.includes(n.id)) basketItems.push(n.id);
+          return basketView();
+        case 'export': return { path: `C:\\exports\\${args.search ? 'search results' : byId.get(args.id).name}.${args.format}`, rows: 3, millis: 1 };
+        case 'drives': return [
+          { path: 'C:\\', label: 'Windows', total: 512e9, free: 120e9 },
+          { path: 'D:\\', label: '', total: 2e12, free: 1.5e12 },
+        ];
         default: return null;
       }
     },

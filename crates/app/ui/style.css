@@ -253,6 +253,8 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   min-height: 120px;
   display: flex;
   flex-direction: column;
+  /* Columns drop by the pane's width, not the window's (see below). */
+  container-type: inline-size;
 }
 
 .splitter {
@@ -356,10 +358,38 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.viewbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .seg { display: flex; }
 .seg button { padding: 2px 10px; font-size: 12px; border-radius: 0; }
-.seg button:first-child { border-radius: 6px 0 0 6px; }
-.seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.seg button { border-left: none; }
+.seg button:first-child { border-radius: 6px 0 0 6px; border-left: 1px solid var(--line); }
+.seg button:last-of-type:not([hidden]),
+.seg button:has(+ button[hidden]) { border-radius: 0 6px 6px 0; }
+
+/* Overview after a scan */
+.overview { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
+.ov-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.ov-card { flex: 1 1 280px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.ov-card.wide { flex-basis: 100%; }
+.ov-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.ov-big { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ov-card .note { margin: 2px 0 10px; }
+.ov-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.ov-list li { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
+.ov-list li:hover { background: var(--hover); }
+.ov-list .o-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-list .o-size { font-variant-numeric: tabular-nums; text-align: right; }
+.ov-list .o-path { grid-column: 1 / -1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-cats li { grid-template-columns: auto 1fr auto; align-items: center; }
+.ov-cats .cat-bar { grid-column: 2 / -1; margin: 3px 0 0; }
+
+/* Start screen drives */
+.drives { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; text-align: left; }
+.drive { display: block; width: 100%; text-align: left; padding: 8px 12px; }
+.drive .d-top { display: flex; justify-content: space-between; gap: 12px; }
+.drive .d-free { color: var(--muted); font-variant-numeric: tabular-nums; }
+.drive .cat-bar { display: block; margin: 6px 0 0; }
+#last-scan { display: block; margin: 10px auto 0; }
 .seg button.on { background: var(--select); }
 
 .no-results { padding: 16px; color: var(--muted); }
@@ -436,6 +466,15 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 
 @media (max-width: 1000px) {
   .side { width: 240px; }
-  .thead, .row { grid-template-columns: minmax(180px, 1fr) 80px 100px 76px; }
+}
+
+/* Narrow tree pane: drop Files and Modified, then Category too. */
+@container (max-width: 880px) {
+  .thead, .row { grid-template-columns: minmax(180px, 1fr) 80px 110px 80px 140px; }
+  .thead > :nth-child(5), .row > :nth-child(5),
+  .thead > :nth-child(6), .row > :nth-child(6) { display: none; }
+}
+@container (max-width: 640px) {
+  .thead, .row { grid-template-columns: minmax(140px, 1fr) 76px 96px 76px; }
   .thead > :nth-child(n+5), .row > :nth-child(n+5) { display: none; }
 }

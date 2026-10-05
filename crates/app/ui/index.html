@@ -20,6 +20,8 @@
       <h1>See what takes up space</h1>
       <p>Pick a folder or a whole drive. diskmap scans it and groups everything by category.</p>
       <button id="pick-empty" class="primary big">Scan folder…</button>
+      <button id="last-scan" class="link" hidden></button>
+      <div class="drives" id="drives" aria-label="Drives"></div>
     </div>
   </div>
 
@@ -75,13 +77,18 @@
           <label title="Also match folders (by name, total size, date and category)"><input type="checkbox" id="f-folders"> Folders</label>
           <button id="f-clear" class="link" hidden>Clear</button>
         </div>
-        <div class="viewbar" id="viewbar" hidden>
+        <div class="viewbar" id="viewbar">
           <span id="f-summary" aria-live="polite"></span>
-          <div class="seg">
-            <button data-view="results">Results</button>
-            <button data-view="tree">Tree</button>
+          <div class="viewbar-right">
+            <button id="export" class="link" title="Save this folder's contents, or the search results, as CSV or JSON">Export…</button>
+            <div class="seg" role="tablist">
+              <button data-view="overview" role="tab">Overview</button>
+              <button data-view="tree" role="tab">Tree</button>
+              <button data-view="results" role="tab" hidden>Results</button>
+            </div>
           </div>
         </div>
+        <div class="overview" id="overview" hidden></div>
         <div class="thead" id="thead" role="row">
           <div data-key="name" role="columnheader">Name</div>
           <div data-key="size" class="num" role="columnheader">Size</div>

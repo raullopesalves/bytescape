@@ -8,9 +8,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod basket;
+mod drives;
+mod export;
 mod search;
 mod treemap;
 
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -498,6 +502,133 @@ fn basket_clear(state: State<AppState>) -> Result<BasketView, String> {
     with_basket(&state, |s| s.basket.clear())
 }
 
+/// Adds every suggested cleanup item (see `overview`) to the basket.
+#[tauri::command]
+fn basket_add_suggested(state: State<AppState>) -> Result<BasketView, String> {
+    with_basket(&state, |s| {
+        let (ids, _, _) = basket::cleanup_candidates(&s.tree, &s.rules, &s.dominant, usize::MAX);
+        for id in ids {
+            s.basket.add(&s.tree, id);
+        }
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Overview {
+    /// Topmost items in "usually safe to clean" categories, minus anything
+    /// risky: how many, their bytes, and the largest few.
+    safe_count: usize,
+    safe_bytes: u64,
+    safe_items: Vec<Details>,
+    largest_files: Vec<Details>,
+}
+
+/// What to show right after a scan.
+#[tauri::command]
+fn overview(state: State<AppState>) -> Result<Overview, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let details = |id: NodeId| Details {
+        row: Row::new(&s.tree, id),
+        path: s.tree.path(id).display().to_string(),
+    };
+    let (ids, safe_count, safe_bytes) =
+        basket::cleanup_candidates(&s.tree, &s.rules, &s.dominant, 8);
+    Ok(Overview {
+        safe_count,
+        safe_bytes,
+        safe_items: ids.into_iter().map(details).collect(),
+        largest_files: s.tree.largest_files(10).into_iter().map(details).collect(),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportDone {
+    path: String,
+    rows: usize,
+    millis: u64,
+}
+
+/// Saves everything below folder `id`, or the current search results, as
+/// CSV or JSON to a file the user picks. `None` if they cancel.
+#[tauri::command]
+async fn export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    format: String,
+    search: bool,
+    id: NodeId,
+) -> Result<Option<ExportDone>, String> {
+    let (format, ext, filter) = match format.as_str() {
+        "csv" => (export::Format::Csv, "csv", "CSV"),
+        "json" => (export::Format::Json, "json", "JSON"),
+        f => return Err(format!("Unknown format {f:?}.")),
+    };
+    let stem = if search {
+        "search results".to_string()
+    } else {
+        let guard = state.session.lock().unwrap();
+        let s = guard.as_ref().ok_or("No scan yet.")?;
+        if id as usize >= s.tree.len() {
+            return Err(format!("No node {id}."));
+        }
+        let name: String = s
+            .tree
+            .node(id)
+            .name
+            .chars()
+            .map(|c| if "<>:\"/\\|?*".contains(c) { '_' } else { c })
+            .collect();
+        name.trim_matches('_').to_string()
+    };
+    let Some(file) = app
+        .dialog()
+        .file()
+        .add_filter(filter, &[ext])
+        .set_file_name(format!("{stem}.{ext}"))
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+
+    let t = Instant::now();
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let mut out = BufWriter::new(File::create(&path).map_err(|e| e.to_string())?);
+    let rows = if search {
+        let st = s.search.as_ref().ok_or("There is no search to export.")?;
+        let rows = st
+            .results
+            .ids
+            .iter()
+            .map(|&i| (i, s.tree.path(i).display().to_string()));
+        export::write(&mut out, &s.tree, &s.rules, rows, format)
+    } else {
+        export::write(
+            &mut out,
+            &s.tree,
+            &s.rules,
+            export::subtree(&s.tree, id),
+            format,
+        )
+    }
+    .and_then(|n| out.flush().map(|_| n))
+    .map_err(|e| e.to_string())?;
+    Ok(Some(ExportDone {
+        path: path.display().to_string(),
+        rows,
+        millis: t.elapsed().as_millis() as u64,
+    }))
+}
+
+#[tauri::command]
+fn drives() -> Vec<drives::Drive> {
+    drives::list()
+}
+
 struct DeleteJob {
     id: NodeId,
     name: String,
@@ -777,6 +908,8 @@ fn load_rules(app: &AppHandle) -> (Rules, Option<String>, Option<String>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Restores the window's size and position from the last run.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             initial_path,
@@ -797,6 +930,10 @@ fn main() {
             basket_remove,
             basket_clear,
             delete_basket,
+            basket_add_suggested,
+            overview,
+            export,
+            drives,
             reveal
         ])
         .run(tauri::generate_context!())

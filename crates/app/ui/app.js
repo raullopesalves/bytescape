@@ -81,13 +81,14 @@ async function startScan(path) {
     return;
   }
   lastPath = path;
+  store.set('lastPath', path);
   summary = null;
   $('main').hidden = true;
   $('statusbar').hidden = true;
   $('empty').hidden = false;
   $('empty').querySelector('h1').textContent = 'Scanning…';
   $('empty').querySelector('p').textContent = path;
-  $('pick-empty').hidden = true;
+  setStartIdle(false);
   setScanning(true);
   setStatus(`Scanning ${path}…`);
 }
@@ -114,7 +115,8 @@ listen('scan-error', (e) => {
   setStatus(cancelled ? 'Scan cancelled.' : `Scan failed: ${e.payload}`, !cancelled);
   $('empty').querySelector('h1').textContent = 'See what takes up space';
   $('empty').querySelector('p').textContent = 'Pick a folder or a whole drive. diskmap scans it and groups everything by category.';
-  $('pick-empty').hidden = false;
+  setStartIdle(true);
+  showStart();
 });
 
 async function loadResult() {
@@ -133,9 +135,9 @@ async function loadResult() {
   $('f-cat').innerHTML = '<option value="">All categories</option>' + [...summary.categories]
     .filter((c) => c.files > 0)
     .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  $('viewbar').hidden = true;
+  $('f-summary').textContent = '';
   $('f-clear').hidden = true;
-  setView('tree');
+  view = 'tree';
 
   renderSide();
   $('empty').hidden = true;
@@ -148,6 +150,7 @@ async function loadResult() {
   $('scroller').focus();
   map.details = new Map();
   zoomTo(root.id);
+  setView('overview');
 }
 
 // ---------- side panel ----------
@@ -370,6 +373,7 @@ function parentIndex(i) {
 }
 
 function onKey(e) {
+  if (keyMenu(e)) return;
   if (view === 'results') return onResultsKey(e);
   if (selected < 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
@@ -453,6 +457,7 @@ async function layoutMap() {
   });
   if (seq !== map.seq) return; // a newer layout was requested meanwhile
   decodeRects(buf);
+  map.dpr = dpr;
   for (const c of [$('map'), $('map-overlay')]) {
     c.width = width;
     c.height = height;
@@ -692,10 +697,10 @@ async function applyFilters() {
   const active = !filterIsEmpty(f);
   for (const li of $('cats').children) li.classList.toggle('on', li.dataset.id === $('f-cat').value);
   $('f-clear').hidden = !active;
-  $('viewbar').hidden = !active;
   if (!active) {
     search = null;
-    setView('tree');
+    $('f-summary').textContent = '';
+    setView(view === 'results' ? 'tree' : view);
   } else {
     search = { generation: r.generation, count: r.count, bytes: r.bytes, items: [], pages: new Set(), sel: -1, anc: [] };
     const what = r.count === 1 ? 'match' : 'matches';
@@ -716,15 +721,23 @@ function applyFiltersSoon() {
 
 function setView(v) {
   if (v === 'results' && !search) v = 'tree';
-  if (view !== v) {
-    if (view === 'tree') treeScroll = $('scroller').scrollTop;
-    view = v;
-    $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
+  const prev = view;
+  if (prev === 'tree' && v !== 'tree') treeScroll = $('scroller').scrollTop;
+  view = v;
+  const ov = v === 'overview';
+  $('overview').hidden = !ov;
+  $('thead').hidden = ov;
+  $('scroller').hidden = ov;
+  if (prev !== v && !ov) $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
+  for (const b of $('viewbar').querySelectorAll('[data-view]')) {
+    b.classList.toggle('on', b.dataset.view === v);
+    b.setAttribute('aria-selected', String(b.dataset.view === v));
   }
-  for (const b of $('viewbar').querySelectorAll('[data-view]')) b.classList.toggle('on', b.dataset.view === v);
+  $('viewbar').querySelector('[data-view=results]').hidden = !search;
   $('thead').classList.toggle('results', v === 'results');
   $('thead').children[2].textContent = v === 'results' ? '% of all' : '% of parent';
-  render();
+  if (ov) renderOverview();
+  else render();
   drawOverlay();
 }
 
@@ -893,6 +906,24 @@ function renderBasket() {
 }
 
 // Context menu on tree rows, results and treemap blocks.
+let menuReturn = null; // where focus goes back to when the menu closes
+
+/** Shows `actions` ([label, fn] pairs) as a menu at a screen point. */
+function openMenuAt(x, y, actions) {
+  const menu = $('menu');
+  menuReturn = document.activeElement;
+  menu.innerHTML = actions.map(([label], k) => `<button role="menuitem" data-k="${k}">${esc(label)}</button>`).join('');
+  menu.onclick = (ev) => {
+    const k = ev.target.closest('[data-k]')?.dataset.k;
+    closeMenu();
+    if (k !== undefined) actions[Number(k)][1]();
+  };
+  menu.hidden = false;
+  menu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - menu.offsetWidth - 4))}px`;
+  menu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - menu.offsetHeight - 4))}px`;
+  menu.querySelector('button').focus();
+}
+
 function openMenu(e, id, { zoomId, showInTree } = {}) {
   e.preventDefault();
   if (id === undefined) return;
@@ -902,23 +933,41 @@ function openMenu(e, id, { zoomId, showInTree } = {}) {
   ];
   if (showInTree) actions.push(['Show in tree', () => { setView('tree'); revealInTree(id); }]);
   if (zoomId !== undefined && zoomId >= 0) actions.push(['Zoom treemap here', () => zoomTo(zoomId)]);
-  const menu = $('menu');
-  menu.innerHTML = actions.map(([label], k) => `<button role="menuitem" data-k="${k}">${label}</button>`).join('');
-  menu.onclick = (ev) => {
-    const k = ev.target.closest('[data-k]')?.dataset.k;
-    closeMenu();
-    if (k !== undefined) actions[Number(k)][1]();
-  };
-  menu.hidden = false;
-  const x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 4);
-  const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 4);
-  menu.style.left = `${Math.max(0, x)}px`;
-  menu.style.top = `${Math.max(0, y)}px`;
-  menu.querySelector('button').focus();
+  openMenuAt(e.clientX, e.clientY, actions);
 }
 
 function closeMenu() {
-  $('menu').hidden = true;
+  const menu = $('menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  menuReturn?.focus?.();
+  menuReturn = null;
+}
+
+/** The context menu for row i of the list showing, at (x, y). */
+function rowMenu(i, x, y) {
+  const at = { preventDefault() {}, clientX: x, clientY: y };
+  if (view === 'results') {
+    selectResult(i);
+    const r = search?.items[i]?.row;
+    openMenu(at, r?.id, { showInTree: true, zoomId: r?.kind === 'dir' ? r.id : undefined });
+  } else {
+    select(i);
+    const r = visible[i].row;
+    openMenu(at, r.id, { zoomId: r.kind === 'dir' ? r.id : undefined });
+  }
+}
+
+/** Menu key or Shift+F10 on the list: the menu under the selected row. */
+function keyMenu(e) {
+  if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return false;
+  e.preventDefault();
+  const i = view === 'results' ? search?.sel : selected;
+  if (i === undefined || i < 0) return true;
+  const el = document.querySelector(`#rows .row[data-i="${i}"]`);
+  const r = el?.getBoundingClientRect();
+  if (r) rowMenu(i, r.left + 40, r.bottom);
+  return true;
 }
 
 // ----- deleting -----
@@ -1037,6 +1086,101 @@ async function refreshAfterDelete() {
   if (view === 'tree') select(selected);
 }
 
+// ---------- overview, export, start screen ----------
+
+async function renderOverview() {
+  const ov = $('overview');
+  let o;
+  try {
+    o = await invoke('overview');
+  } catch (e) {
+    ov.textContent = String(e);
+    return;
+  }
+  if (view !== 'overview') return;
+  const total = summary.root.size;
+  const item = (d) => `<li data-id="${d.row.id}" title="${esc(d.path)}">
+      <span class="o-name">${esc(d.row.name)}</span><span class="o-size">${human(d.row.size)}</span>
+      <span class="o-path">${esc(d.path)}</span></li>`;
+  const top = [...summary.categories].filter((c) => c.files > 0).sort((a, b) => b.size - a.size).slice(0, 6);
+  const catRows = top.map((c) => {
+    const pct = total > 0 ? (c.size * 100) / total : 0;
+    return `<li data-cat="${c.id}" title="Show only ${esc(c.name)}">
+      <span class="swatch" style="background:${colorOf(c)}"></span><span class="o-name">${esc(c.name)}</span>
+      <span class="o-size">${human(c.size)}</span>
+      <div class="cat-bar"><span style="width:${pct}%;background:${colorOf(c)}"></span></div></li>`;
+  }).join('');
+  const safe = o.safeCount
+    ? `<div class="ov-big">${human(o.safeBytes)}</div>
+       <p class="note">in ${plural(o.safeCount, 'place')} in categories that are usually safe to clean, such as caches and temporary files. System and OneDrive folders are left out.</p>
+       <ul class="ov-list">${o.safeItems.map(item).join('')}</ul>
+       <button class="primary" id="ov-add-safe">${o.safeCount === 1 ? 'Add it' : `Add all ${fmtInt(o.safeCount)}`} to the basket for review</button>`
+    : '<p class="note">Nothing here is in a category that is usually safe to clean.</p>';
+  ov.innerHTML = `<div class="ov-grid">
+      <section class="ov-card"><h3>Where the space goes</h3><ul class="ov-list ov-cats">${catRows}</ul></section>
+      <section class="ov-card"><h3>Usually safe to clean</h3>${safe}</section>
+      <section class="ov-card wide"><h3>Largest files</h3>
+        <ul class="ov-list">${o.largestFiles.map(item).join('') || '<li>No files.</li>'}</ul></section>
+    </div>`;
+}
+
+/** What Export saves: the search results, or the selected folder (a file's folder). */
+function exportTarget() {
+  if (view === 'results' && search) return { search: true, id: 0, what: 'the search results' };
+  let i = view === 'tree' ? Math.max(0, selected) : 0;
+  if (i > 0 && visible[i].row.kind !== 'dir') i = parentIndex(i);
+  const row = visible[Math.max(0, i)].row;
+  return { search: false, id: row.id, what: `“${row.name}”` };
+}
+
+async function doExport(format, t) {
+  try {
+    const r = await invoke('export', { format, search: t.search, id: t.id });
+    if (r) setStatus(`Saved ${plural(r.rows, 'row')} to ${r.path} in ${r.millis} ms.`);
+  } catch (e) {
+    setStatus(`Export failed: ${e}`, true);
+  }
+}
+
+// Per-viewer settings that survive restarts. Storage may be unavailable.
+const store = {
+  get(k) {
+    try { return localStorage.getItem(`diskmap.${k}`); } catch { return null; }
+  },
+  set(k, v) {
+    try { localStorage.setItem(`diskmap.${k}`, String(v)); } catch { /* not saved */ }
+  },
+};
+
+/** Start screen: drives to scan and the last folder. */
+async function showStart() {
+  const last = store.get('lastPath');
+  $('last-scan').hidden = !last;
+  if (last) {
+    $('last-scan').textContent = `Scan ${last} again`;
+    $('last-scan').dataset.path = last;
+  }
+  let drives = [];
+  try {
+    drives = await invoke('drives');
+  } catch {
+    // no drive list; the folder picker still works
+  }
+  $('drives').innerHTML = drives.map((d) => {
+    const pct = d.total ? ((d.total - d.free) * 100) / d.total : 0;
+    const name = d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+    return `<button class="drive" data-path="${esc(d.path)}">
+        <span class="d-top"><span>${name}</span><span class="d-free">${human(d.free)} free of ${human(d.total)}</span></span>
+        <span class="cat-bar"><span style="width:${pct}%;background:var(--accent)"></span></span></button>`;
+  }).join('');
+}
+
+function setStartIdle(idle) {
+  $('pick-empty').hidden = !idle;
+  $('drives').hidden = !idle;
+  $('last-scan').hidden = !idle || !store.get('lastPath');
+}
+
 // ---------- wiring ----------
 
 $('pick').addEventListener('click', pick);
@@ -1091,7 +1235,7 @@ $('basket-items').addEventListener('click', (e) => {
   const id = e.target.closest('li[data-id]')?.dataset.id;
   if (id !== undefined) {
     setView('tree');
-    revealInTree(Number(id));
+    revealInTree(Number(id)).then(() => $('scroller').focus());
   }
 });
 $('basket-delete').addEventListener('click', openDeleteDialog);
@@ -1100,15 +1244,19 @@ $('basket-clear').addEventListener('click', async () => setBasket(await invoke('
 $('rows').addEventListener('contextmenu', (e) => {
   const el = e.target.closest('.row');
   if (!el) return;
-  const i = Number(el.dataset.i);
-  if (view === 'results') {
-    selectResult(i);
-    const r = search?.items[i]?.row;
-    openMenu(e, r?.id, { showInTree: true, zoomId: r?.kind === 'dir' ? r.id : undefined });
-  } else {
-    select(i);
-    const r = visible[i].row;
-    openMenu(e, r.id, { zoomId: r.kind === 'dir' ? r.id : undefined });
+  e.preventDefault();
+  rowMenu(Number(el.dataset.i), e.clientX, e.clientY);
+});
+$('menu').addEventListener('keydown', (e) => {
+  const items = [...$('menu').querySelectorAll('button')];
+  const at = items.indexOf(document.activeElement);
+  const go = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (go !== undefined) {
+    e.preventDefault();
+    items[(go + items.length) % items.length].focus();
+  } else if (e.key === 'Tab') {
+    e.preventDefault();
+    closeMenu();
   }
 });
 document.addEventListener('mousedown', (e) => {
@@ -1184,6 +1332,13 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   drawMap();
   drawOverlay();
 });
+// Moving to a screen with other scaling changes devicePixelRatio but often not
+// the map's size in CSS pixels, so the resize observer doesn't see it. A
+// once-a-second check is simple and dependable (media query change events
+// were not, after the first change).
+setInterval(() => {
+  if (summary && map.dpr && window.devicePixelRatio !== map.dpr) layoutMap();
+}, 1000);
 
 // Drag the splitter to share the height between the tree and the treemap.
 $('splitter').addEventListener('pointerdown', (e) => {
@@ -1196,6 +1351,7 @@ $('splitter').addEventListener('pointerdown', (e) => {
     $('map-pane').style.height = `${h}px`;
   };
   const up = () => {
+    store.set('mapHeight', parseInt($('map-pane').style.height, 10));
     split.classList.remove('dragging');
     split.removeEventListener('pointermove', move);
     split.removeEventListener('pointerup', up);
@@ -1204,5 +1360,44 @@ $('splitter').addEventListener('pointerdown', (e) => {
   split.addEventListener('pointerup', up);
 });
 
+$('overview').addEventListener('click', async (e) => {
+  if (e.target.closest('#ov-add-safe')) {
+    setBasket(await invoke('basket_add_suggested'));
+    setStatus(`The cleanup basket now has ${plural(basket.items.length, 'item')}. Review it before deleting anything.`);
+    return;
+  }
+  const cat = e.target.closest('[data-cat]')?.dataset.cat;
+  if (cat !== undefined) {
+    $('f-cat').value = cat;
+    applyFilters();
+    return;
+  }
+  const id = e.target.closest('[data-id]')?.dataset.id;
+  if (id !== undefined) {
+    setView('tree');
+    await revealInTree(Number(id));
+    $('scroller').focus();
+  }
+});
+$('export').addEventListener('click', (e) => {
+  const t = exportTarget();
+  const r = e.currentTarget.getBoundingClientRect();
+  openMenuAt(r.left, r.bottom + 4, [
+    [`Export ${t.what} as CSV…`, () => doExport('csv', t)],
+    [`Export ${t.what} as JSON…`, () => doExport('json', t)],
+  ]);
+});
+$('drives').addEventListener('click', (e) => {
+  const path = e.target.closest('[data-path]')?.dataset.path;
+  if (path) startScan(path);
+});
+$('last-scan').addEventListener('click', (e) => startScan(e.currentTarget.dataset.path));
+
+const savedMap = Number(store.get('mapHeight'));
+if (savedMap >= 120) $('map-pane').style.height = `${Math.min(savedMap, window.innerHeight - 320)}px`;
+
 markSortHeader();
-invoke('initial_path').then((p) => p && startScan(p));
+invoke('initial_path').then((p) => {
+  if (p) startScan(p);
+  else showStart();
+});
