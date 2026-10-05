@@ -1,0 +1,21 @@
+[package]
+name = "diskmap-scanner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Fast parallel disk usage scanner that builds a compact node tree"
+
+[lib]
+name = "scanner"
+
+[dependencies]
+rayon = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,6 @@
+target/
+*.json
+!**/rules/*.json
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
