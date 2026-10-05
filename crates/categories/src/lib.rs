@@ -293,8 +293,10 @@ impl Rules {
             let id = i as NodeId;
             let node = tree.node(id);
             let cat = if id == tree.root() {
+                // The folders above the scanned one count too: scanning a
+                // folder inside node_modules is still developer dependencies.
                 let path = normalize(&node.name);
-                let cat = self.node_category(Some(&path), &path, node.kind, NONE);
+                let cat = self.classify(&path, node.kind == NodeKind::Dir);
                 dir_paths[i] = path.into();
                 cat
             } else {

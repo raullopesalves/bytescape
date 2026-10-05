@@ -186,7 +186,8 @@ fn bad_rules_are_errors() {
 
 #[test]
 fn apply_to_scanned_tree() {
-    let dir = tempfile::tempdir().unwrap();
+    // Not the system temp folder: the default rules make all of it "caches".
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let r = dir.path();
     fs::create_dir_all(r.join("proj/node_modules/pkg")).unwrap();
     fs::create_dir(r.join("empty")).unwrap();
@@ -225,4 +226,26 @@ fn apply_to_scanned_tree() {
     let root = tree.node(tree.root());
     assert_eq!(totals.iter().map(|t| t.files).sum::<u64>(), root.files);
     assert_eq!(totals.iter().map(|t| t.size).sum::<u64>(), root.size);
+}
+
+#[test]
+fn folders_above_the_scanned_one_count() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let pkg = dir.path().join("proj/node_modules/pkg");
+    fs::create_dir_all(pkg.join("lib")).unwrap();
+    fs::write(pkg.join("lib/index.js"), b"x").unwrap();
+    fs::write(pkg.join("photo.jpg"), b"x").unwrap();
+
+    let mut tree = scanner::scan(&pkg, &scanner::ScanOptions::default()).unwrap();
+    let rules = Rules::defaults();
+    rules.apply(&mut tree);
+    let id = |n: categories::CategoryId| rules.category(n).map_or("", |c| c.id.as_str());
+    for i in 0..tree.len() as u32 {
+        assert_eq!(
+            id(tree.node(i).category),
+            "dev-deps",
+            "{}",
+            tree.node(i).name
+        );
+    }
 }
