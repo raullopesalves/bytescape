@@ -54,6 +54,12 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   Bytescape" in Explorer's right-click menu (added by the installer).
 - **Updates:** Bytescape checks for a new release when it starts and offers
   to install it (signed, so a tampered download is refused).
+- **Rescan one folder** (right-click or F5) after changing things outside
+  the app, instead of the whole drive.
+- **Right-click** anything to open it, open a terminal there, copy its path
+  or see its Windows properties.
+- **Settings:** light or dark theme, folders to leave out of scans
+  (`node_modules`, `D:\Backups`), and your own category rules.
 - **Export** a folder's contents or search results as CSV or JSON.
 
 ![Tree and treemap](docs/screenshots/tree-and-treemap.png)
