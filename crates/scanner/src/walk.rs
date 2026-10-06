@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -11,42 +11,25 @@ use crate::mft::{self, MftError};
 use crate::tree::{flags, Node, NodeId, NodeKind, ScanStats, ScanTree};
 use crate::{ScanError, ScanMethod, ScanOptions};
 
-/// Owned node built during the walk, flattened into the arena afterwards.
-struct Raw {
-    name: Box<str>,
-    kind: NodeKind,
-    flags: u8,
-    size: u64,
-    alloc: u64,
-    modified: i64,
-    key: Option<FileKey>,
-    error: Option<Box<str>>,
-    children: Vec<Raw>,
-}
-
-impl Raw {
-    fn new(name: Box<str>, kind: NodeKind) -> Self {
-        Raw {
-            name,
-            kind,
-            flags: 0,
-            size: 0,
-            alloc: 0,
-            modified: 0,
-            key: None,
-            error: None,
-            children: Vec::new(),
-        }
-    }
+/// The flat arena, filled while the walk runs: when a folder is listed, its
+/// children are appended as one block (in name order), so every folder's
+/// children are contiguous and come after it. Building it directly, instead
+/// of an owned tree copied over afterwards, keeps one copy of the nodes in
+/// memory instead of two. Node ids depend on the order the threads get
+/// there; nothing relies on them beyond those two rules.
+#[derive(Default)]
+struct Arena {
+    nodes: Vec<Node>,
+    errors: Vec<(NodeId, Box<str>)>,
+    link_keys: Vec<(NodeId, FileKey)>,
+    too_many: bool,
 }
 
 struct Ctx<'a> {
     opts: &'a ScanOptions,
     exclude: crate::Exclude,
     vol: VolumeInfo,
-    /// Entries and hardlink keys seen, so the flat arrays can be sized once.
-    entries: AtomicUsize,
-    keys: AtomicUsize,
+    arena: Mutex<Arena>,
 }
 
 impl Ctx<'_> {
@@ -55,6 +38,22 @@ impl Ctx<'_> {
             .cancel
             .as_ref()
             .is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+fn new_node(name: Box<str>, kind: NodeKind, parent: NodeId) -> Node {
+    Node {
+        name,
+        parent,
+        first_child: 0,
+        child_count: 0,
+        kind,
+        flags: 0,
+        category: 0,
+        size: 0,
+        alloc: 0,
+        modified: 0,
+        files: 0,
     }
 }
 
@@ -106,30 +105,37 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
         }
     }
 
+    let mut root_node = new_node(root.to_string_lossy().into(), NodeKind::Dir, 0);
+    root_node.modified = fsinfo::modified_secs(&md);
+    let mut arena = Arena::default();
+    arena.nodes.reserve(1 << 16);
+    arena.nodes.push(root_node);
     let ctx = Ctx {
         opts,
         exclude: crate::Exclude::new(&opts.exclude),
         vol: fsinfo::volume_info(root),
-        entries: AtomicUsize::new(0),
-        keys: AtomicUsize::new(0),
+        arena: Mutex::new(arena),
     };
-    let mut raw_root = Raw::new(root.to_string_lossy().into(), NodeKind::Dir);
-    raw_root.modified = fsinfo::modified_secs(&md);
-    pool.install(|| walk_dir(root, &mut raw_root, &ctx));
+    pool.install(|| walk_dir(root, 0, &ctx));
 
     if ctx.cancelled() {
         return Err(ScanError::Cancelled);
     }
-
-    let sizes = (ctx.entries.into_inner() + 1, ctx.keys.into_inner());
-    let mut tree = flatten(raw_root, sizes)?;
-    let keys = std::mem::take(&mut tree.link_keys);
-    tree.tree.compute_totals(keys);
-    tree.tree.stats.elapsed = start.elapsed();
-    tree.tree.stats.method = ScanMethod::Walk;
-    tree.tree.stats.mft_skipped = mft_skipped;
-    tree.tree.stats.mft_needs_admin = mft_needs_admin;
-    Ok(tree.tree)
+    let arena = ctx.arena.into_inner().unwrap();
+    if arena.too_many {
+        return Err(ScanError::TooManyNodes);
+    }
+    let mut tree = ScanTree {
+        nodes: arena.nodes,
+        errors: arena.errors,
+        stats: ScanStats::default(),
+    };
+    tree.compute_totals(arena.link_keys);
+    tree.stats.elapsed = start.elapsed();
+    tree.stats.method = ScanMethod::Walk;
+    tree.stats.mft_skipped = mft_skipped;
+    tree.stats.mft_needs_admin = mft_needs_admin;
+    Ok(tree)
 }
 
 /// Scans each of `drives` in turn (see [`local_drives`](crate::local_drives))
@@ -159,8 +165,9 @@ pub fn scan_drives(
     Ok(ScanTree::combine("All drives", trees))
 }
 
-/// Lists one folder into `dir.children`, then recurses into subfolders in parallel.
-fn walk_dir(path: &Path, dir: &mut Raw, ctx: &Ctx) {
+/// Lists folder `id` (at `path`) into the arena, then walks its subfolders
+/// in parallel.
+fn walk_dir(path: &Path, id: NodeId, ctx: &Ctx) {
     if ctx.cancelled() {
         return;
     }
@@ -176,131 +183,71 @@ fn walk_dir(path: &Path, dir: &mut Raw, ctx: &Ctx) {
     ) {
         Ok(l) => l,
         Err(e) => {
-            dir.flags |= flags::READ_ERROR;
-            dir.error = Some(e.to_string().into());
+            let mut a = ctx.arena.lock().unwrap();
+            a.nodes[id as usize].flags |= flags::READ_ERROR;
+            a.errors.push((id, e.to_string().into()));
             return;
         }
     };
-    if let Some(err) = listing.error {
-        // The listing broke part-way; keep what we have.
-        dir.flags |= flags::READ_ERROR;
-        dir.error = Some(err);
-    }
+    let mut entries = listing.entries;
+    // Stable order makes results (and hardlink choice) repeatable.
+    entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-    let mut subdirs: Vec<(Raw, PathBuf)> = Vec::new();
-    let mut files: Vec<Raw> = Vec::new();
-    let mut new_files = 0u64;
-    let mut new_bytes = 0u64;
-
-    ctx.entries
-        .fetch_add(listing.entries.len(), Ordering::Relaxed);
-    let keys = listing.entries.iter().filter(|e| e.key.is_some()).count();
-    ctx.keys.fetch_add(keys, Ordering::Relaxed);
-    for e in listing.entries {
-        let mut r = Raw::new(e.name, e.kind);
-        r.size = e.size;
-        r.alloc = e.alloc;
-        r.modified = e.modified;
-        r.key = e.key;
-        r.flags = e.flags;
-        r.error = e.error;
-        match e.kind {
-            NodeKind::Dir => subdirs.push((r, e.path)),
-            NodeKind::File => {
-                new_files += 1;
-                new_bytes += r.size;
-                files.push(r);
+    let mut subdirs: Vec<(NodeId, PathBuf)> = Vec::new();
+    let (mut new_files, mut new_bytes) = (0u64, 0u64);
+    {
+        let mut a = ctx.arena.lock().unwrap();
+        if let Some(err) = listing.error {
+            // The listing broke part-way; keep what we have.
+            a.nodes[id as usize].flags |= flags::READ_ERROR;
+            a.errors.push((id, err));
+        }
+        let first = a.nodes.len();
+        if first + entries.len() > NodeId::MAX as usize {
+            a.too_many = true;
+            return;
+        }
+        let dir = &mut a.nodes[id as usize];
+        dir.first_child = first as NodeId;
+        dir.child_count = entries.len() as u32;
+        for (k, e) in entries.into_iter().enumerate() {
+            let cid = (first + k) as NodeId;
+            if let Some(key) = e.key {
+                a.link_keys.push((cid, key));
             }
-            _ => files.push(r),
+            if let Some(err) = e.error {
+                a.errors.push((cid, err));
+            }
+            match e.kind {
+                NodeKind::Dir => subdirs.push((cid, e.path)),
+                NodeKind::File => {
+                    new_files += 1;
+                    new_bytes += e.size;
+                }
+                _ => {}
+            }
+            let mut n = new_node(e.name, e.kind, id);
+            n.flags = e.flags;
+            n.size = e.size;
+            n.alloc = e.alloc;
+            n.modified = e.modified;
+            a.nodes.push(n);
         }
     }
-
     if let Some(p) = &ctx.opts.progress {
         p.files.fetch_add(new_files, Ordering::Relaxed);
         p.bytes.fetch_add(new_bytes, Ordering::Relaxed);
     }
 
-    subdirs.par_iter_mut().for_each(|(raw, p)| {
-        if ctx.exclude.matches(&raw.name, || p.display().to_string()) {
-            raw.flags |= flags::EXCLUDED;
+    subdirs.par_iter().for_each(|(cid, p)| {
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        if ctx.exclude.matches(&name, || p.display().to_string()) {
+            ctx.arena.lock().unwrap().nodes[*cid as usize].flags |= flags::EXCLUDED;
         } else {
-            walk_dir(p, raw, ctx);
+            walk_dir(p, *cid, ctx);
         }
     });
-
-    let mut children = files;
-    children.extend(subdirs.into_iter().map(|(r, _)| r));
-    // Stable order makes results (and hardlink choice) repeatable.
-    children.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-    dir.children = children;
-}
-
-struct Flat {
-    tree: ScanTree,
-    link_keys: Vec<(NodeId, FileKey)>,
-}
-
-/// Breadth-first copy into the arena so each folder's children are contiguous.
-/// `sizes` is (nodes, hardlink keys), counted during the walk: sizing the
-/// arrays once avoids the copy (and twice the memory) of growing them.
-fn flatten(root: Raw, sizes: (usize, usize)) -> Result<Flat, ScanError> {
-    let mut nodes: Vec<Node> = Vec::with_capacity(sizes.0);
-    let mut errors = Vec::new();
-    let mut link_keys = Vec::with_capacity(sizes.1);
-
-    let mut queue: VecDeque<(Raw, NodeId)> = VecDeque::new();
-    let mut root = root;
-    nodes.push(to_node(&mut root, 0));
-    queue.push_back((root, 0));
-
-    while let Some((mut raw, id)) = queue.pop_front() {
-        if let Some(err) = raw.error.take() {
-            errors.push((id, err));
-        }
-        if let Some(key) = raw.key {
-            link_keys.push((id, key));
-        }
-        let children = std::mem::take(&mut raw.children);
-        if children.is_empty() {
-            continue;
-        }
-        let first = u32::try_from(nodes.len()).map_err(|_| ScanError::TooManyNodes)?;
-        let count = u32::try_from(children.len()).map_err(|_| ScanError::TooManyNodes)?;
-        first.checked_add(count).ok_or(ScanError::TooManyNodes)?;
-        {
-            let n = &mut nodes[id as usize];
-            n.first_child = first;
-            n.child_count = count;
-        }
-        for (i, mut child) in children.into_iter().enumerate() {
-            let cid = first + i as u32;
-            nodes.push(to_node(&mut child, id));
-            queue.push_back((child, cid));
-        }
-    }
-
-    Ok(Flat {
-        tree: ScanTree {
-            nodes,
-            errors,
-            stats: ScanStats::default(),
-        },
-        link_keys,
-    })
-}
-
-fn to_node(raw: &mut Raw, parent: NodeId) -> Node {
-    Node {
-        name: std::mem::take(&mut raw.name),
-        parent,
-        first_child: 0,
-        child_count: 0,
-        kind: raw.kind,
-        flags: raw.flags,
-        category: 0,
-        size: raw.size,
-        alloc: raw.alloc,
-        modified: raw.modified,
-        files: 0,
-    }
 }

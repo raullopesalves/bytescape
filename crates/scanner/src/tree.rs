@@ -458,26 +458,50 @@ impl ScanTree {
         }
     }
 
+    /// Names from below the root down to `id`, for comparing paths.
+    fn path_parts(&self, id: NodeId) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut cur = id;
+        while cur != 0 {
+            let n = &self.nodes[cur as usize];
+            parts.push(&*n.name);
+            cur = n.parent;
+        }
+        parts.reverse();
+        parts
+    }
+
     /// Fills in folder totals and marks duplicate hardlinks.
     ///
     /// Children always have larger ids than their parent, so walking the
     /// arena backwards finishes every subtree before its parent is read.
     pub(crate) fn compute_totals(&mut self, mut link_keys: Vec<(NodeId, FileKey)>) {
-        // Files sharing a key are one physical file. The first in id order
-        // counts; the others are marked as duplicates. Sorting by (key, id)
-        // puts each file's links side by side, lowest id first, so no map
-        // is needed (there can be a key for every file).
+        // Files sharing a key are one physical file. The shallowest counts
+        // (the first by path among equally deep ones); the others are
+        // marked as duplicates. That's breadth-first order, decided from
+        // the paths because the walk's ids depend on thread timing; the
+        // walk and the MFT pick the same link. Sorting by key puts
+        // each file's links side by side, so no map is needed (there can be
+        // a key for every file).
         link_keys.sort_unstable_by_key(|&(id, key)| (key, id));
         for links in link_keys.chunk_by(|a, b| a.1 == b.1) {
-            let [(first, _), rest @ ..] = links else {
-                continue;
-            };
-            if rest.is_empty() {
+            if links.len() < 2 {
                 continue;
             }
-            self.nodes[*first as usize].flags |= flags::HARDLINKED;
-            for (id, _) in rest {
-                self.nodes[*id as usize].flags |= flags::HARDLINKED | flags::HARDLINK_DUP;
+            let first = links
+                .iter()
+                .map(|&(id, _)| id)
+                .min_by_key(|&id| {
+                    let parts = self.path_parts(id);
+                    (parts.len(), parts)
+                })
+                .expect("two or more links");
+            for &(id, _) in links {
+                let n = &mut self.nodes[id as usize];
+                n.flags |= flags::HARDLINKED;
+                if id != first {
+                    n.flags |= flags::HARDLINK_DUP;
+                }
             }
         }
         drop(link_keys);
