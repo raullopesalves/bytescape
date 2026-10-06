@@ -7,3 +7,6 @@ crates/app/gen/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/tasks.json
+
+# Builds copied to the repo root for quick testing
+/*.exe
