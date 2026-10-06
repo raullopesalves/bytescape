@@ -400,10 +400,11 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .dup-group { border-top: 1px solid var(--line); padding: 8px 0 6px; }
 .dup-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; flex-wrap: wrap; }
 .dup-head .link { font-weight: normal; }
-.dup-file { display: grid; grid-template-columns: auto 1fr auto; gap: 0 8px; align-items: center; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
+.dup-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
 .dup-file:hover { background: var(--hover); }
+.dup-file .o-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dup-file .dup-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.dup-file .dup-show { grid-column: 2 / -1; text-align: left; font-size: 12px; color: var(--muted); padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dup-file .dup-show { grid-column: 2 / -1; min-width: 0; text-align: left; font-size: 12px; color: var(--muted); padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dup-file .dup-show:hover { color: var(--accent); }
 .dup-file.keep .o-name::after { content: " · keep"; color: var(--safe); font-size: 12px; }
 #dupes-more { margin-top: 8px; }

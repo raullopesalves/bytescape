@@ -228,7 +228,7 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
         scan_ms: st.elapsed.as_millis() as u64,
         categorise_ms: s.categorise.as_millis() as u64,
         categories,
-        rules_file: s.rules_file.clone(),
+        rules_file: s.rules_file.as_deref().map(with_appdata),
         rules_error: s.rules_error.clone(),
         method: match st.method {
             scanner::ScanMethod::Mft => "mft",
@@ -237,6 +237,17 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
         mft_skipped: st.mft_skipped.clone(),
         admin_would_help: st.mft_needs_admin,
     })
+}
+
+/// Shows a path under the user's roaming app data as `%APPDATA%\...`:
+/// shorter, and it doesn't show the user name.
+fn with_appdata(path: &str) -> String {
+    match std::env::var("APPDATA") {
+        Ok(base) if !base.is_empty() && path.to_lowercase().starts_with(&base.to_lowercase()) => {
+            format!("%APPDATA%{}", &path[base.len()..])
+        }
+        _ => path.to_string(),
+    }
 }
 
 /// Starts the app again as administrator to scan `path` (Windows asks the

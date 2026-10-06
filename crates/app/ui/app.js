@@ -1123,12 +1123,16 @@ async function renderOverview() {
       <span class="o-size">${human(c.size)}</span>
       <div class="cat-bar"><span style="width:${pct}%;background:${colorOf(c)}"></span></div></li>`;
   }).join('');
+  // Bytes in "safe" categories, including what isn't suggested (system or OneDrive folders).
+  const safeTotal = summary.categories.filter((c) => c.cleanup === 'safe').reduce((t, c) => t + c.size, 0);
   const safe = o.safeCount
     ? `<div class="ov-big">${human(o.safeBytes)}</div>
        <p class="note">in ${plural(o.safeCount, 'place')} in categories that are usually safe to clean, such as caches and temporary files. System and OneDrive folders are left out.</p>
        <ul class="ov-list">${o.safeItems.map(item).join('')}</ul>
        <button class="primary" id="ov-add-safe">${o.safeCount === 1 ? 'Add it' : `Add all ${fmtInt(o.safeCount)}`} to the basket for review</button>`
-    : '<p class="note">Nothing here is in a category that is usually safe to clean.</p>';
+    : safeTotal > 0
+      ? `<p class="note">${human(safeTotal)} is in categories that are usually safe to clean, but all of it is in system or OneDrive folders, so none is suggested here. Windows' Disk Cleanup is the safer way to clear system caches.</p>`
+      : '<p class="note">Nothing here is in a category that is usually safe to clean.</p>';
   ov.innerHTML = `<div class="ov-grid">
       <section class="ov-card"><h3>Where the space goes</h3><ul class="ov-list ov-cats">${catRows}</ul></section>
       <section class="ov-card"><h3>Usually safe to clean</h3>${safe}</section>
