@@ -8,7 +8,7 @@ const ROW_H = 26; // must match .row height in style.css
 const OVERSCAN = 10;
 
 // Node flags, as in scanner::flags.
-const FLAG = { DUP: 1, ONLINE: 4, COMPRESSED: 8, SPARSE: 16, READ_ERROR: 32 };
+const FLAG = { DUP: 1, ONLINE: 4, COMPRESSED: 8, SPARSE: 16, READ_ERROR: 32, REMOVED: 64, EXCLUDED: 128 };
 
 // Colour names used by the rules files. A rules file may also give #rgb hex.
 const COLORS = {
@@ -145,6 +145,8 @@ listen('scan-progress', (e) => {
   $('ss-dirs').textContent = fmtInt(p.dirs);
   $('ss-bytes').textContent = human(p.bytes);
   $('ss-time').textContent = `${(p.elapsedMs / 1000).toFixed(1)} s`;
+  $('scan-stage').hidden = !p.stage;
+  $('scan-stage').textContent = p.stage ? `Now scanning ${p.stage}` : '';
 });
 
 listen('scan-done', async () => {
@@ -422,6 +424,7 @@ function rowHtml(i) {
   if (r.flags & FLAG.COMPRESSED) tags.push('compressed');
   if (r.flags & FLAG.READ_ERROR) { cls.push('readerr'); tags.push('partly unreadable'); }
   if (r.kind === 'link') tags.push('link, not followed');
+  if (r.flags & FLAG.EXCLUDED) tags.push('left out (Settings)');
   if (r.kind === 'error') tags.push('unreadable');
 
   const open = expanded.has(r.id);
@@ -557,7 +560,7 @@ function parentIndex(i) {
 }
 
 function onKey(e) {
-  if (keyMenu(e)) return;
+  if (keyMenu(e) || itemKey(e)) return;
   if (flat()) return onResultsKey(e);
   if (selected < 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
@@ -1305,7 +1308,8 @@ let menuReturn = null; // where focus goes back to when the menu closes
 function openMenuAt(x, y, actions) {
   const menu = $('menu');
   menuReturn = document.activeElement;
-  menu.innerHTML = actions.map(([label], k) => `<button role="menuitem" data-k="${k}">${esc(label)}</button>`).join('');
+  menu.innerHTML = actions.map(([label], k) => (label === '-' ? '<hr>'
+    : `<button role="menuitem" data-k="${k}">${esc(label)}</button>`)).join('');
   menu.onclick = (ev) => {
     const k = ev.target.closest('[data-k]')?.dataset.k;
     closeMenu();
@@ -1317,7 +1321,7 @@ function openMenuAt(x, y, actions) {
   menu.querySelector('button').focus();
 }
 
-function openMenu(e, id, { zoomId, showInTree, many, allIn, matches } = {}) {
+function openMenu(e, id, { zoomId, showInTree, many, allIn, matches, dir } = {}) {
   e.preventDefault();
   if (id === undefined) return;
   const what = many > 1 ? ` ${fmtInt(many)} items` : '';
@@ -1325,12 +1329,21 @@ function openMenu(e, id, { zoomId, showInTree, many, allIn, matches } = {}) {
   if (matches) toggle = [allIn ? `Take${what} out of cleanup basket` : 'Add the matching files to cleanup basket', basketToggleSelection];
   else if (many) toggle = [allIn ? `Take${what} out of cleanup basket` : `Add${what} to cleanup basket`, basketToggleSelection];
   else toggle = [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)];
+  const act = (action) => () => itemAction(id, action);
   const actions = [
     toggle,
+    '-',
+    [dir ? 'Open in Explorer' : 'Open', act('open')],
     ['Show in Explorer', () => invoke('reveal', { id }).catch((err) => setStatus(String(err), true))],
-  ];
+    ['Open in Terminal', act('terminal')],
+    ['Copy path', () => copyPath(id)],
+    ['Properties', act('properties')],
+    '-',
+  ].map((a) => (a === '-' ? ['-'] : a));
+  if (dir) actions.push(['Rescan this folder', () => rescanFolder(id)]);
   if (showInTree) actions.push(['Show in tree', () => { setView('tree'); revealInTree(id); }]);
   if (zoomId !== undefined && zoomId >= 0) actions.push(['Zoom treemap here', () => zoomTo(zoomId)]);
+  if (actions[actions.length - 1][0] === '-') actions.pop();
   openMenuAt(e.clientX, e.clientY, actions);
 }
 
@@ -1354,7 +1367,7 @@ function rowMenu(i, x, y) {
     const paths = basket.items.map((it) => it.path);
     const covered = (p) => paths.some((b) => p === b || p.startsWith(b.endsWith('\\') ? b : b + '\\'));
     const allIn = many > 0 && [...search.marked].every((k) => search.items[k] && covered(search.items[k].path));
-    openMenu(at, r?.id, { showInTree: !many, many, allIn, zoomId: r?.kind === 'dir' ? r.id : undefined });
+    openMenu(at, r?.id, { showInTree: !many, many, allIn, dir: r?.kind === 'dir', zoomId: r?.kind === 'dir' ? r.id : undefined });
   } else {
     const r = visible[i].row;
     const keep = marked.has(r.id) && marked.size > 1;
@@ -1363,9 +1376,95 @@ function rowMenu(i, x, y) {
     const allIn = visible.every((v, k) => !marked.has(v.row.id) || treeRowInBasket(k));
     // In grouped results a folder that doesn't match stands for its matches.
     const matches = shownTree === 'groups' && !allIn && visible.some((v) => marked.has(v.row.id) && v.row.kind === 'dir' && !v.row.hit);
-    openMenu(at, r.id, { many: n > 1 || shownTree === 'groups' ? n : 0, allIn, matches, zoomId: r.kind === 'dir' ? r.id : undefined });
+    openMenu(at, r.id, { many: n > 1 || shownTree === 'groups' ? n : 0, allIn, matches, dir: r.kind === 'dir', zoomId: r.kind === 'dir' ? r.id : undefined });
   }
 }
+
+/** Keys for the selected item: F5 rescans its folder, Ctrl+C copies its
+ *  path, Alt+Enter shows its properties, Ctrl+Enter opens it. */
+function itemKey(e) {
+  const id = currentId();
+  if (id === undefined) return false;
+  if (e.key === 'F5') {
+    // A file's folder in the tree; in the flat results only folders.
+    let target = id;
+    if (!flat() && visible[selected]?.row.kind !== 'dir') target = visible[parentIndex(selected)]?.row.id;
+    else if (flat() && search.items[search.sel]?.row.kind !== 'dir') target = undefined;
+    if (target !== undefined) rescanFolder(target);
+  } else if (e.key.toLowerCase() === 'c' && e.ctrlKey && !e.shiftKey) {
+    copyPath(id);
+  } else if (e.key === 'Enter' && e.altKey) {
+    itemAction(id, 'properties');
+  } else if (e.key === 'Enter' && e.ctrlKey) {
+    itemAction(id, 'open');
+  } else {
+    return false;
+  }
+  e.preventDefault();
+  return true;
+}
+
+async function itemAction(id, action) {
+  try {
+    await invoke('item_action', { id, action });
+  } catch (e) {
+    setStatus(String(e), true);
+  }
+}
+
+async function copyPath(id) {
+  try {
+    const path = await invoke('node_path', { id });
+    await navigator.clipboard.writeText(path);
+    setStatus(`Copied ${path}`);
+  } catch (e) {
+    setStatus(`Couldn't copy the path: ${e}`, true);
+  }
+}
+
+// ----- rescanning one folder -----
+
+let rescanning = null; // { id, path, before } while a folder is being rescanned
+
+async function rescanFolder(id) {
+  if (!summary) return;
+  if (id === summary.root.id) {
+    if (lastPath) startScan(lastPath);
+    return;
+  }
+  let before = 0;
+  try {
+    before = (await invoke('node_details', { id })).row.size;
+    rescanning = { id, path: await invoke('rescan_folder', { id }), before };
+  } catch (e) {
+    setStatus(String(e), true);
+    return;
+  }
+  setScanning(true);
+  setStatus(`Rescanning ${rescanning.path}…`);
+}
+
+listen('rescan-progress', (e) => {
+  if (rescanning) setStatus(`Rescanning ${rescanning.path}… ${plural(e.payload.files, 'file')}, ${human(e.payload.bytes)}`);
+});
+listen('rescan-done', async () => {
+  const r = rescanning;
+  rescanning = null;
+  setScanning(false);
+  // Zoomed into something that was replaced: zoom to the rescanned folder.
+  try {
+    if ((await invoke('node_details', { id: map.root })).row.flags & FLAG.REMOVED) map.root = r.id;
+  } catch { map.root = r.id; }
+  await refreshAfterDelete();
+  const now = (await invoke('node_details', { id: r.id })).row.size;
+  setStatus(`Rescanned ${r.path}: ${human(now)} (${signed(now - r.before)} since the scan).`);
+});
+listen('rescan-error', (e) => {
+  rescanning = null;
+  setScanning(false);
+  const cancelled = e.payload === 'scan cancelled';
+  setStatus(cancelled ? 'Rescan cancelled.' : `Rescan failed: ${e.payload}`, !cancelled);
+});
 
 /** Menu key or Shift+F10 on the list: the menu under the selected row. */
 function keyMenu(e) {
@@ -1527,6 +1626,7 @@ async function refreshAfterDelete() {
   fileTypes = null;
   renderSide();
   const kept = expanded;
+  const [selId, oldIndex] = [visible[selected]?.row.id, selected];
   cache = new Map();
   for (const id of kept) {
     try {
@@ -1540,6 +1640,12 @@ async function refreshAfterDelete() {
   expanded = new Set([...kept].filter((id) => cache.has(id)));
   visible = [{ row: summary.root, depth: 0, parentSize: summary.root.size }];
   rebuild();
+  // Keep the selection; if it's gone, select what took its place.
+  const at = visible.findIndex((v) => v.row.id === selId);
+  selected = at >= 0 ? at : Math.min(oldIndex, visible.length - 1);
+  const shown = new Set(visible.map((v) => v.row.id));
+  marked = new Set([...marked].filter((id) => shown.has(id)));
+  if (!marked.size) marked.add(visible[selected].row.id);
   map.details = new Map();
   setBasket(await invoke('basket_view'));
   if (search) await applyFilters();
@@ -1802,11 +1908,115 @@ listen('update-progress', (e) => {
 });
 $('update').addEventListener('click', openUpdate);
 $('check-updates').addEventListener('click', () => checkUpdate(true));
-$('auto-update').checked = store.get('autoUpdate') !== 'false';
-$('auto-update').addEventListener('change', () => store.set('autoUpdate', $('auto-update').checked));
-invoke('app_version').then((v) => { $('app-version').textContent = v; }).catch(() => {});
+let appVersion = '';
+invoke('app_version').then((v) => { appVersion = v; $('app-version').textContent = v; }).catch(() => {});
 // A while after starting, so the first scan isn't slowed down.
-if ($('auto-update').checked) setTimeout(() => checkUpdate(false), 4000);
+if (store.get('autoUpdate') !== 'false') setTimeout(() => checkUpdate(false), 4000);
+
+// ---------- settings and about ----------
+
+const excludeList = () => (store.get('exclude') ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  if (map.n) {
+    drawMap();
+    drawOverlay();
+  }
+}
+
+async function openSettings() {
+  const theme = store.get('theme') ?? 'system';
+  const [shell, rules] = await Promise.all([
+    invoke('shell_menu_state').catch(() => false),
+    invoke('rules_info').catch(() => null),
+  ]);
+  const radio = (v, label) => `<label><input type="radio" name="theme" value="${v}"${theme === v ? ' checked' : ''}> ${label}</label>`;
+  modal('Settings', `
+    <section class="set"><h3>Appearance</h3>
+      ${radio('system', 'Same as Windows')}${radio('light', 'Light')}${radio('dark', 'Dark')}</section>
+    <section class="set"><h3>Folders to leave out</h3>
+      <p class="note">One per line. A name, like <code>node_modules</code>, leaves out every folder called that; a full path, like <code>D:\\Backups</code>, just that folder. They show in the list but aren't read. Applies from the next scan.</p>
+      <textarea id="set-exclude" rows="4" spellcheck="false">${esc(excludeList().join('\n'))}</textarea></section>
+    <section class="set"><h3>Search results</h3>
+      <label><input type="checkbox" id="set-group"${grouped ? ' checked' : ''}> Group by folder (otherwise one list, largest first)</label></section>
+    <section class="set"><h3>Explorer</h3>
+      <label><input type="checkbox" id="set-shell"${shell ? ' checked' : ''}> Show “Scan with Bytescape” when right-clicking a folder or drive</label></section>
+    <section class="set"><h3>Updates</h3>
+      <div class="row-of"><label><input type="checkbox" id="set-auto"${store.get('autoUpdate') !== 'false' ? ' checked' : ''}> Check when Bytescape starts</label>
+        <button id="set-check">Check now</button></div></section>
+    <section class="set"><h3>Category rules</h3>
+      <p class="note">Your own rules ${rules ? `go in <code>${esc(rules[0])}</code>` : 'file'}. They add to the built-in ones.</p>
+      <div class="row-of"><button id="set-rules-open">${rules?.[1] ? 'Open rules file' : 'Create rules file'}</button>
+        <button id="set-rules-reload"${summary ? '' : ' disabled'}>Reload rules</button><span class="note" id="set-rules-said"></span></div></section>`,
+  [['About', '', openAbout], ['Close', 'primary', closeModal]]);
+  $('modal').querySelector('.modal-card').classList.add('wide');
+  $('modal-body').onchange = async (e) => {
+    const t = e.target;
+    if (t.name === 'theme') {
+      store.set('theme', t.value);
+      applyTheme(t.value);
+    } else if (t.id === 'set-exclude') {
+      store.set('exclude', t.value);
+      invoke('set_exclude', { exclude: excludeList() });
+    } else if (t.id === 'set-group') {
+      $('f-group').checked = t.checked;
+      $('f-group').dispatchEvent(new Event('change'));
+    } else if (t.id === 'set-shell') {
+      try {
+        t.checked = await invoke('set_shell_menu', { on: t.checked });
+      } catch (err) {
+        setStatus(String(err), true);
+      }
+    } else if (t.id === 'set-auto') {
+      store.set('autoUpdate', t.checked);
+    }
+  };
+  $('modal-body').onclick = async (e) => {
+    const id = e.target.closest('button')?.id;
+    if (id === 'set-check') {
+      closeModal();
+      checkUpdate(true);
+    } else if (id === 'set-rules-open') {
+      invoke('open_rules').catch((err) => setStatus(String(err), true));
+    } else if (id === 'set-rules-reload') {
+      let problem;
+      try {
+        problem = await invoke('reload_rules');
+      } catch (err) {
+        $('set-rules-said').textContent = String(err);
+        return;
+      }
+      $('set-rules-said').textContent = problem ? `Problem in the file, built-in rules used: ${problem}` : 'Reloaded.';
+      await refreshAfterDelete();
+    }
+  };
+}
+
+function openAbout() {
+  const link = (path, label) => `<button class="link" data-link="${path}">${label}</button>`;
+  modal('About Bytescape', `
+    <div class="about-head"><div class="logo-slot"></div><div><b>Bytescape ${esc(appVersion)}</b>
+      <p class="note">A disk usage analyzer for Windows.</p></div></div>
+    <p>© 2026 Raul Alves. Free and open source under the MIT or Apache 2.0 licence, at your choice.</p>
+    <div class="about-links">
+      ${link('', 'Project page')}
+      ${link('/releases', 'Releases and what’s new')}
+      ${link('/issues', 'Report a problem or ask for a feature')}
+      ${link('/blob/main/docs/THIRD_PARTY_LICENSES.md', 'Licences of the libraries it uses')}
+    </div>`,
+  [['Check for updates', '', () => { closeModal(); checkUpdate(true); }], ['Close', 'primary', closeModal]]);
+  for (const slot of $('modal-body').querySelectorAll('.logo-slot')) slot.innerHTML = LOGO_SVG;
+  $('modal-body').onclick = (e) => {
+    const path = e.target.closest('[data-link]')?.dataset.link;
+    if (path === undefined) return;
+    invoke('open_link', { url: `https://github.com/raullopesalves/bytescape${path}` }).catch((err) => setStatus(String(err), true));
+  };
+}
+
+applyTheme(store.get('theme'));
 $('splash').addEventListener('click', endSplash);
 
 /** Recently scanned folders, newest first: [{ path, at }]. */
@@ -1859,7 +2069,6 @@ async function showStart() {
       </button>`;
   }).join('') || '<p class="note">No drives found. Browse for a folder instead.</p>';
   $('places').innerHTML = places.map((p) => `<button class="place" data-path="${esc(p.path)}" title="${esc(p.path)}">${FOLDER_ICON}${esc(p.name)}</button>`).join('');
-  invoke('shell_menu_state').then((on) => { $('shell-menu').checked = on; }).catch(() => {});
   const recent = recentList();
   $('recent-section').hidden = !recent.length;
   $('recent').innerHTML = recent.map((r) => `<button data-path="${esc(r.path)}" title="Scan ${esc(pathLabel(r.path))} again">
@@ -1882,6 +2091,7 @@ function showScanning(path) {
   $('statusbar').hidden = true;
   $('scanning').hidden = false;
   $('scan-path').textContent = pathLabel(path);
+  $('scan-stage').hidden = true;
   $('ss-files').textContent = '0';
   $('ss-dirs').textContent = '0';
   $('ss-bytes').textContent = '0 B';
@@ -2095,13 +2305,9 @@ $('path-form').addEventListener('submit', (e) => {
   const path = $('path-in').value.trim().replace(/^"(.*)"$/, '$1');
   if (path) startScan(path);
 });
-$('shell-menu').addEventListener('change', async () => {
-  try {
-    $('shell-menu').checked = await invoke('set_shell_menu', { on: $('shell-menu').checked });
-  } catch (e) {
-    setStatus(String(e), true);
-  }
-});
+$('settings').addEventListener('click', openSettings);
+$('start-settings').addEventListener('click', openSettings);
+$('start-about').addEventListener('click', openAbout);
 $('rescan').addEventListener('click', () => lastPath && startScan(lastPath));
 $('cancel').addEventListener('click', () => invoke('cancel_scan'));
 $('elevate').addEventListener('click', () => {
@@ -2296,7 +2502,7 @@ overlay.addEventListener('contextmenu', (e) => {
   const { i } = eventRect(e);
   if (i < 0) return;
   showTip(-1);
-  openMenu(e, map.id[i], { showInTree: true, zoomId: zoomTarget(i) });
+  openMenu(e, map.id[i], { showInTree: true, dir: map.kind[i] === K_DIR, zoomId: zoomTarget(i) });
 });
 overlay.addEventListener('dblclick', (e) => {
   const { i } = eventRect(e);
@@ -2450,6 +2656,8 @@ const savedMap = Number(store.get('mapHeight'));
 if (savedMap >= 120) $('map-pane').style.height = `${Math.min(savedMap, window.innerHeight - 320)}px`;
 
 markSortHeader();
+// Settings the scanner needs, before the first scan starts.
+invoke('set_exclude', { exclude: excludeList() }).catch(() => {});
 invoke('initial_path').then((p) => {
   if (p) startScan(p);
   else showStart();

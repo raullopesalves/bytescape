@@ -21,7 +21,17 @@ use scanner::{flags, scan, NodeId, NodeKind, Progress, ScanMethod, ScanOptions, 
 )]
 struct Args {
     /// Folder or drive to scan, for example C:\ or C:\Users\raul
-    path: PathBuf,
+    #[arg(required_unless_present = "all_drives")]
+    path: Option<PathBuf>,
+
+    /// Scan every fixed and removable drive, under one root
+    #[arg(long, conflicts_with = "path")]
+    all_drives: bool,
+
+    /// Leave out folders: a name (node_modules) anywhere, or a full path.
+    /// Can be given more than once
+    #[arg(long, value_name = "NAME_OR_PATH")]
+    exclude: Vec<String>,
 
     /// How many folders and files to list
     #[arg(long, default_value_t = 15)]
@@ -98,6 +108,7 @@ fn main() -> ExitCode {
             "mft" => ScanMethod::Mft,
             _ => ScanMethod::Auto,
         },
+        exclude: args.exclude.clone(),
     };
 
     let done = Arc::new(AtomicBool::new(false));
@@ -116,7 +127,14 @@ fn main() -> ExitCode {
         })
     });
 
-    let result = scan(&args.path, &opts);
+    let result = match &args.path {
+        Some(path) if !args.all_drives => scan(path, &opts),
+        _ => scanner::scan_drives(&scanner::local_drives(), &opts, |_, d| {
+            if !io::stderr().is_terminal() {
+                eprintln!("Scanning {}", d.display());
+            }
+        }),
+    };
     done.store(true, Ordering::Relaxed);
     if let Some(t) = ticker {
         let _ = t.join();
@@ -233,6 +251,27 @@ By category"
     writeln!(o, "\nLargest files")?;
     for id in tree.largest_files(args.top) {
         row(&mut o, tree, rules, id, root.size, true)?;
+    }
+
+    writeln!(o, "\nFile types")?;
+    for t in categories::file_types(tree).iter().take(args.top) {
+        let pct = if root.size > 0 {
+            t.size as f64 * 100.0 / root.size as f64
+        } else {
+            0.0
+        };
+        let ext = if t.ext.is_empty() {
+            "(none)".to_string()
+        } else {
+            format!(".{}", t.ext)
+        };
+        let cat = rules.category(t.category).map_or("", |c| c.name.as_str());
+        writeln!(
+            o,
+            "  {:>10}  {pct:5.1}%  {ext:<14} {:>9} files  {cat}",
+            human(t.size),
+            t.files
+        )?;
     }
 
     if args.show_errors && !tree.errors().is_empty() {

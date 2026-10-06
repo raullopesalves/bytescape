@@ -258,6 +258,38 @@ fn combined_scans_use_each_root_path() {
 }
 
 #[test]
+fn file_types_by_extension() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let r = dir.path();
+    fs::create_dir_all(r.join("Sub")).unwrap();
+    fs::write(r.join("a.MP4"), vec![0u8; 3000]).unwrap();
+    fs::write(r.join("Sub/b.mp4"), vec![0u8; 2000]).unwrap();
+    fs::write(r.join("c.tar.gz"), vec![0u8; 500]).unwrap();
+    fs::write(r.join(".gitignore"), vec![0u8; 10]).unwrap();
+    fs::write(r.join("README"), vec![0u8; 20]).unwrap();
+    let mut tree = scanner::scan(r, &scanner::ScanOptions::default()).unwrap();
+    let rules = Rules::defaults();
+    rules.apply(&mut tree);
+    let t: Vec<(String, u64, u64)> = categories::file_types(&tree)
+        .into_iter()
+        .map(|t| (t.ext, t.files, t.size))
+        .collect();
+    assert_eq!(
+        t,
+        [
+            ("mp4".into(), 2, 5000),
+            ("gz".into(), 1, 500),
+            (String::new(), 2, 30)
+        ]
+    );
+    let mp4 = &categories::file_types(&tree)[0];
+    assert_eq!(
+        rules.category(mp4.category).map(|c| c.id.as_str()),
+        Some("videos")
+    );
+}
+
+#[test]
 fn folders_above_the_scanned_one_count() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let pkg = dir.path().join("proj/node_modules/pkg");

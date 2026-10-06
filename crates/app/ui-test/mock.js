@@ -23,6 +23,8 @@ const categories = [
 const handlers = {};
 let dupesDone = false;
 let mockShellMenu = false;
+let mockExclude = [];
+const mockActions = []; // right-click actions "run", for tests
 const mockCleanups = []; // cleanups "run", for tests
 const mockHistory = [
   { id: 3, taken: 1791300000, size: 1800 },
@@ -304,6 +306,18 @@ window.__TAURI__ = {
         };
         case 'run_cleanup': mockCleanups.push(args.what); return true;
         case 'app_version': return '0.1.0';
+        case 'set_exclude': mockExclude = args.exclude; return null;
+        case 'rules_info': return ['%APPDATA%\\io.github.raullopesalves.bytescape\\categories.toml', false];
+        case 'open_rules': mockActions.push('open_rules'); return null;
+        case 'reload_rules': return null;
+        case 'open_link': mockActions.push(`link ${args.url}`); return null;
+        case 'item_action': mockActions.push(`${args.action} ${args.id}`); return null;
+        case 'rescan_folder': {
+          const path = chain(args.id).map(([, x]) => x).join('\\');
+          setTimeout(() => handlers['rescan-progress']?.({ payload: { files: 3, dirs: 1, bytes: 500, elapsedMs: 10 } }), 20);
+          setTimeout(() => handlers['rescan-done']?.({ payload: args.id }), 60);
+          return path;
+        }
         case 'check_update': return location.search.includes('update')
           ? { version: '0.2.0', current: '0.1.0', notes: '- Faster scans\n- A File types view', date: '2026-10-20' } : null;
         case 'install_update':

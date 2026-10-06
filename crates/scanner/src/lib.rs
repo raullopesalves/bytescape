@@ -16,8 +16,9 @@ mod mft;
 mod tree;
 mod walk;
 
+pub use fsinfo::local_drives;
 pub use tree::{flags, Node, NodeId, NodeKind, ScanStats, ScanTree};
-pub use walk::scan;
+pub use walk::{scan, scan_drives};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -52,6 +53,57 @@ pub struct ScanOptions {
     /// Set to `true` from another thread to stop the scan early.
     pub cancel: Option<Arc<AtomicBool>>,
     pub method: ScanMethod,
+    /// Folders to leave out: listed, flagged
+    /// [`EXCLUDED`](flags::EXCLUDED), their contents not read. An entry
+    /// with a `\` or `/` is a full path; anything else is a folder name,
+    /// matched anywhere. Case is ignored. The scanned folder itself is
+    /// never left out.
+    pub exclude: Vec<String>,
+}
+
+/// [`ScanOptions::exclude`], ready for matching.
+#[derive(Default)]
+pub(crate) struct Exclude {
+    names: Vec<String>,
+    /// Lower case, `\` separators, no trailing separator.
+    paths: Vec<String>,
+}
+
+impl Exclude {
+    pub(crate) fn new(list: &[String]) -> Self {
+        let mut e = Exclude::default();
+        for item in list.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let s = item.to_lowercase().replace('/', "\\");
+            if s.contains('\\') {
+                e.paths.push(s.trim_end_matches('\\').to_string());
+            } else {
+                e.names.push(s);
+            }
+        }
+        e
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.names.is_empty() && self.paths.is_empty()
+    }
+
+    /// Whether the folder `name` at `path` is left out. `path` is only
+    /// built when there are path entries.
+    pub(crate) fn matches(&self, name: &str, path: impl FnOnce() -> String) -> bool {
+        if self
+            .names
+            .iter()
+            .any(|n| name.eq_ignore_ascii_case(n) || name.to_lowercase() == *n)
+        {
+            return true;
+        }
+        if self.paths.is_empty() {
+            return false;
+        }
+        let p = path().to_lowercase().replace('/', "\\");
+        let p = p.strip_prefix(r"\\?\").unwrap_or(&p);
+        self.paths.iter().any(|x| p.trim_end_matches('\\') == x)
+    }
 }
 
 impl Default for ScanOptions {
@@ -63,6 +115,7 @@ impl Default for ScanOptions {
             progress: None,
             cancel: None,
             method: ScanMethod::Auto,
+            exclude: Vec::new(),
         }
     }
 }

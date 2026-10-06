@@ -178,6 +178,94 @@ fn combined_scans_keep_paths_and_totals() {
 }
 
 #[test]
+fn rescanning_a_folder_matches_a_full_scan() {
+    let dir = fixture();
+    let r = dir.path();
+    let opts = ScanOptions::default();
+    let mut tree = scan(r, &opts).unwrap();
+    let a = find(&tree, "a");
+    let old_two = find(&tree, "a/b/two.bin");
+
+    // Change what's in a/: one file gone, one bigger, one new folder.
+    fs::remove_file(r.join("a/b/two.bin")).unwrap();
+    write(&r.join("a/b/three.bin"), 7000);
+    write(&r.join("a/new/four.bin"), 300);
+    assert!(tree.replace_contents(a, scan(&r.join("a"), &opts).unwrap()));
+
+    let full = scan(r, &opts).unwrap();
+    let totals = |t: &ScanTree, id: u32| {
+        let n = t.node(id);
+        (n.size, n.alloc, n.files)
+    };
+    assert_eq!(totals(&tree, 0), totals(&full, 0));
+    assert_eq!(totals(&tree, a), totals(&full, find(&full, "a")));
+    assert_eq!(tree.stats().files, full.stats().files);
+    assert_eq!(tree.stats().dirs, full.stats().dirs);
+    assert!(tree.node(old_two).has_flag(flags::REMOVED));
+    let three = find(&tree, "a/b/three.bin");
+    assert_eq!(tree.path(three), r.join("a").join("b").join("three.bin"));
+    assert!(three > a);
+    for id in 0..tree.len() as u32 {
+        if tree.node(id).has_flag(flags::REMOVED) {
+            continue;
+        }
+        for c in tree.child_ids(id) {
+            assert_eq!(tree.node(c).parent, id);
+            assert!(c > id);
+        }
+    }
+    // A file can't be rescanned this way.
+    let top = find(&tree, "top.txt");
+    assert!(!tree.replace_contents(top, scan(r, &opts).unwrap()));
+}
+
+#[test]
+fn excluded_folders_are_listed_but_not_read() {
+    let dir = fixture();
+    let r = dir.path();
+    let opts = |exclude: &[String]| ScanOptions {
+        exclude: exclude.to_vec(),
+        ..ScanOptions::default()
+    };
+    let full = scan(r, &opts(&[])).unwrap();
+    // By name, anywhere ("B" matches a/b), and by full path.
+    let by_name = scan(r, &opts(&["B".into()])).unwrap();
+    let b = find(&by_name, "a/b");
+    assert!(by_name.node(b).has_flag(flags::EXCLUDED));
+    assert_eq!(by_name.child_ids(b).len(), 0);
+    assert_eq!(by_name.node(0).size, full.node(0).size - 5000);
+    let c_path = format!("{}/", r.join("c").display());
+    let by_path = scan(r, &opts(&[c_path])).unwrap();
+    assert!(by_path.node(find(&by_path, "c")).has_flag(flags::EXCLUDED));
+    assert!(!by_path.node(find(&by_path, "a")).has_flag(flags::EXCLUDED));
+    // The scanned folder itself is never left out.
+    let name = r.file_name().unwrap().to_string_lossy().to_string();
+    assert!(!scan(r, &opts(&[name]))
+        .unwrap()
+        .node(0)
+        .has_flag(flags::EXCLUDED));
+}
+
+#[test]
+fn local_drives_exist_and_scan_drives_combines() {
+    let drives = scanner::local_drives();
+    assert!(!drives.is_empty());
+    assert!(drives.iter().all(|d| d.is_dir()));
+    let (one, two) = (fixture(), fixture());
+    let mut seen = Vec::new();
+    let missing = one.path().join("not-there");
+    let tree = scanner::scan_drives(
+        &[one.path().into(), missing, two.path().into()],
+        &ScanOptions::default(),
+        |k, _| seen.push(k),
+    )
+    .unwrap();
+    assert_eq!(seen, [0, 1, 2]);
+    assert_eq!(tree.child_ids(0).len(), 2, "the missing one is left out");
+    assert!(scanner::scan_drives(&[], &ScanOptions::default(), |_, _| {}).is_err());
+}
+
+#[test]
 fn paths_round_trip() {
     let dir = fixture();
     let tree = scan(dir.path(), &ScanOptions::default()).unwrap();

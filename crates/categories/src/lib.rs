@@ -412,6 +412,63 @@ impl Rules {
     }
 }
 
+/// Files of one extension (see [`file_types`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TypeTotal {
+    /// Lower case, without the dot; empty for files without one.
+    pub ext: String,
+    pub files: u64,
+    pub size: u64,
+    pub alloc: u64,
+    /// The category holding most of its bytes.
+    pub category: CategoryId,
+}
+
+/// Totals per file extension of a categorised tree, largest first.
+/// "archive.tar.gz" counts as gz; ".gitignore" has no extension. Duplicate
+/// hardlinks and removed files are skipped.
+pub fn file_types(tree: &ScanTree) -> Vec<TypeTotal> {
+    // Per extension: totals and bytes per category.
+    let mut by: HashMap<String, (TypeTotal, HashMap<CategoryId, u64>)> = HashMap::new();
+    let mut lower = String::new();
+    for n in tree.nodes() {
+        if n.kind != NodeKind::File || n.flags & (flags::HARDLINK_DUP | flags::REMOVED) != 0 {
+            continue;
+        }
+        let ext = match n.name.rfind('.') {
+            Some(i) if i > 0 && i + 1 < n.name.len() => &n.name[i + 1..],
+            _ => "",
+        };
+        lower.clear();
+        lower.extend(ext.chars().flat_map(char::to_lowercase));
+        let (t, cats) = by.entry(lower.clone()).or_insert_with(|| {
+            (
+                TypeTotal {
+                    ext: lower.clone(),
+                    ..TypeTotal::default()
+                },
+                HashMap::new(),
+            )
+        });
+        t.files += 1;
+        t.size += n.size;
+        t.alloc += n.alloc;
+        *cats.entry(n.category).or_default() += n.size;
+    }
+    let mut out: Vec<TypeTotal> = by
+        .into_values()
+        .map(|(mut t, cats)| {
+            t.category = cats
+                .into_iter()
+                .max_by_key(|&(c, b)| (b, std::cmp::Reverse(c)))
+                .map_or(0, |(c, _)| c);
+            t
+        })
+        .collect();
+    out.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.ext.cmp(&b.ext)));
+    out
+}
+
 /// Files and bytes in one category.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CategoryTotal {

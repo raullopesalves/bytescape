@@ -42,6 +42,7 @@ impl Raw {
 
 struct Ctx<'a> {
     opts: &'a ScanOptions,
+    exclude: crate::Exclude,
     vol: VolumeInfo,
     /// Entries and hardlink keys seen, so the flat arrays can be sized once.
     entries: AtomicUsize,
@@ -87,6 +88,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
     if try_mft {
         match pool.install(|| mft::scan(root, opts)) {
             Ok(mut tree) => {
+                tree.leave_out(&crate::Exclude::new(&opts.exclude));
                 tree.stats.method = ScanMethod::Mft;
                 tree.stats.elapsed = start.elapsed();
                 return Ok(tree);
@@ -106,6 +108,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
 
     let ctx = Ctx {
         opts,
+        exclude: crate::Exclude::new(&opts.exclude),
         vol: fsinfo::volume_info(root),
         entries: AtomicUsize::new(0),
         keys: AtomicUsize::new(0),
@@ -127,6 +130,33 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
     tree.tree.stats.mft_skipped = mft_skipped;
     tree.tree.stats.mft_needs_admin = mft_needs_admin;
     Ok(tree.tree)
+}
+
+/// Scans each of `drives` in turn (see [`local_drives`](crate::local_drives))
+/// and puts them under one root named "All drives"
+/// ([`ScanTree::combine`]). `on_start(k, drive)` is called before each one.
+/// Drives that can't be read are left out; it fails only if none can be.
+pub fn scan_drives(
+    drives: &[PathBuf],
+    opts: &ScanOptions,
+    mut on_start: impl FnMut(usize, &Path),
+) -> Result<ScanTree, ScanError> {
+    let mut trees = Vec::new();
+    let mut last = None;
+    for (k, d) in drives.iter().enumerate() {
+        on_start(k, d);
+        match scan(d, opts) {
+            Ok(t) => trees.push(t),
+            Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
+            Err(e) => last = Some(e),
+        }
+    }
+    if trees.is_empty() {
+        return Err(
+            last.unwrap_or_else(|| ScanError::Root(std::io::Error::other("no drive to scan")))
+        );
+    }
+    Ok(ScanTree::combine("All drives", trees))
 }
 
 /// Lists one folder into `dir.children`, then recurses into subfolders in parallel.
@@ -190,9 +220,13 @@ fn walk_dir(path: &Path, dir: &mut Raw, ctx: &Ctx) {
         p.bytes.fetch_add(new_bytes, Ordering::Relaxed);
     }
 
-    subdirs
-        .par_iter_mut()
-        .for_each(|(raw, p)| walk_dir(p, raw, ctx));
+    subdirs.par_iter_mut().for_each(|(raw, p)| {
+        if ctx.exclude.matches(&raw.name, || p.display().to_string()) {
+            raw.flags |= flags::EXCLUDED;
+        } else {
+            walk_dir(p, raw, ctx);
+        }
+    });
 
     let mut children = files;
     children.extend(subdirs.into_iter().map(|(r, _)| r));

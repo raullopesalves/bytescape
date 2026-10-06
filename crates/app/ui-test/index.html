@@ -8,6 +8,7 @@
     <button id="elevate" hidden title="Reads the drive's file table directly, which is several times faster. Windows asks for permission first.">Scan faster as administrator</button>
     <button id="update" class="update-btn" hidden>Update available</button>
     <div id="status" class="status" aria-live="polite"></div>
+    <button id="settings" class="toolbar-end" title="Settings and About">Settings</button>
   </header>
 
   <div id="splash" class="splash" aria-hidden="true">
@@ -46,9 +47,8 @@
         </form>
         <button id="start-back" class="big" hidden>Back to results</button>
       </div>
-      <label class="shell-toggle"><input type="checkbox" id="shell-menu"> Show “Scan with Bytescape” when right-clicking a folder or drive in Explorer</label>
-      <p class="version-line">Bytescape <span id="app-version"></span> · <button class="link" id="check-updates">Check for updates</button>
-        · <label><input type="checkbox" id="auto-update" checked> Check when Bytescape starts</label></p>
+      <p class="version-line">Bytescape <span id="app-version"></span> · <button class="link" id="start-settings">Settings</button>
+        · <button class="link" id="check-updates">Check for updates</button> · <button class="link" id="start-about">About</button></p>
     </div>
   </div>
 
@@ -57,6 +57,7 @@
       <div class="logo-slot loader"></div>
       <h1>Scanning</h1>
       <p class="scan-path" id="scan-path"></p>
+      <p class="scan-stage" id="scan-stage" hidden></p>
       <div class="scan-stats">
         <div><b id="ss-files">0</b><span>files</span></div>
         <div><b id="ss-dirs">0</b><span>folders</span></div>

@@ -88,6 +88,39 @@ pub fn volume_info(root: &Path) -> VolumeInfo {
     imp::volume_info(root)
 }
 
+/// The fixed and removable drives that are ready (`C:\`, `D:\`, ...); `/`
+/// elsewhere.
+#[cfg(windows)]
+pub fn local_drives() -> Vec<std::path::PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDriveStringsW};
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    let mut buf = vec![0u16; 512];
+    // SAFETY: `buf` is valid for its length.
+    let n = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+    if n == 0 || n > buf.len() {
+        return Vec::new();
+    }
+    buf[..n]
+        .split(|&c| c == 0)
+        .filter(|r| !r.is_empty())
+        .filter(|r| {
+            let mut wide = r.to_vec();
+            wide.push(0);
+            // SAFETY: `wide` is NUL-terminated.
+            let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+            matches!(kind, DRIVE_FIXED | DRIVE_REMOVABLE)
+        })
+        .map(|r| std::path::PathBuf::from(String::from_utf16_lossy(r)))
+        .filter(|p| p.is_dir()) // a card reader without a card isn't
+        .collect()
+}
+
+#[cfg(not(windows))]
+pub fn local_drives() -> Vec<std::path::PathBuf> {
+    vec!["/".into()]
+}
+
 pub fn modified_secs(md: &Metadata) -> i64 {
     md.modified()
         .ok()

@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod actions;
 mod basket;
 mod drives;
 mod duplicates;
@@ -19,7 +20,6 @@ mod treemap;
 mod updates;
 mod wincleanup;
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -67,6 +67,8 @@ struct SearchState {
 #[derive(Default)]
 struct AppState {
     session: Mutex<Option<Session>>,
+    /// Folders to leave out of scans (Settings), for `ScanOptions::exclude`.
+    exclude: Mutex<Vec<String>>,
     /// The running scan's cancel flag; `None` when no scan is running.
     scanning: Mutex<Option<Arc<AtomicBool>>>,
     /// Scan history; `None` if the database couldn't be opened.
@@ -167,7 +169,12 @@ struct ProgressMsg {
     dirs: u64,
     bytes: u64,
     elapsed_ms: u64,
+    /// What's being scanned in a scan of several drives ("C:\ (1 of 2)").
+    stage: Option<String>,
 }
+
+/// Set while a scan runs, for the progress messages.
+type Stage = Arc<Mutex<Option<String>>>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -841,53 +848,16 @@ struct FileType {
 fn file_types(state: State<AppState>) -> Result<Vec<FileType>, String> {
     let guard = state.session.lock().unwrap();
     let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
-    Ok(file_type_totals(tree))
-}
-
-fn file_type_totals(tree: &ScanTree) -> Vec<FileType> {
-    // Per extension: totals and bytes per category.
-    let mut by: HashMap<String, (FileType, HashMap<u16, u64>)> = HashMap::new();
-    let mut lower = String::new();
-    for n in tree.nodes() {
-        if n.kind != NodeKind::File || n.flags & (flags::HARDLINK_DUP | flags::REMOVED) != 0 {
-            continue;
-        }
-        // "archive.tar.gz" counts as gz; ".gitignore" has no extension.
-        let ext = match n.name.rfind('.') {
-            Some(i) if i > 0 && i + 1 < n.name.len() => &n.name[i + 1..],
-            _ => "",
-        };
-        lower.clear();
-        lower.extend(ext.chars().flat_map(char::to_lowercase));
-        let (t, cats) = by.entry(lower.clone()).or_insert_with(|| {
-            (
-                FileType {
-                    ext: lower.clone(),
-                    files: 0,
-                    size: 0,
-                    alloc: 0,
-                    category: 0,
-                },
-                HashMap::new(),
-            )
-        });
-        t.files += 1;
-        t.size += n.size;
-        t.alloc += n.alloc;
-        *cats.entry(n.category).or_default() += n.size;
-    }
-    let mut out: Vec<FileType> = by
-        .into_values()
-        .map(|(mut t, cats)| {
-            t.category = cats
-                .into_iter()
-                .max_by_key(|&(c, b)| (b, std::cmp::Reverse(c)))
-                .map_or(0, |(c, _)| c);
-            t
+    Ok(categories::file_types(tree)
+        .into_iter()
+        .map(|t| FileType {
+            ext: t.ext,
+            files: t.files,
+            size: t.size,
+            alloc: t.alloc,
+            category: t.category,
         })
-        .collect();
-    out.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.ext.cmp(&b.ext)));
-    out
+        .collect())
 }
 
 // ----- Windows' own cleanups -----
@@ -1195,30 +1165,16 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
     let opts = ScanOptions {
         progress: Some(progress.clone()),
         cancel: Some(cancel),
+        exclude: app.state::<AppState>().exclude.lock().unwrap().clone(),
         ..ScanOptions::default()
     };
 
-    let start = Instant::now();
     let done = Arc::new(AtomicBool::new(false));
-    let ticker = {
-        let (app, done) = (app.clone(), done.clone());
-        thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
-                let (files, dirs, bytes) = progress.snapshot();
-                let msg = ProgressMsg {
-                    files,
-                    dirs,
-                    bytes,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                };
-                let _ = app.emit("scan-progress", msg);
-                thread::sleep(Duration::from_millis(100));
-            }
-        })
-    };
+    let stage = Stage::default();
+    let ticker = progress_ticker(&app, "scan-progress", progress, stage.clone(), done.clone());
 
     let result = if path.as_os_str() == ALL_DRIVES {
-        scan_all_drives(&opts)
+        scan_all_drives(&opts, &stage)
     } else {
         scanner::scan(&path, &opts)
     };
@@ -1265,23 +1221,242 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
     }
 }
 
+/// A right-click action on node `id`: "open", "terminal" (in its folder)
+/// or "properties".
+#[tauri::command]
+fn item_action(
+    app: AppHandle,
+    state: State<AppState>,
+    id: NodeId,
+    action: String,
+) -> Result<(), String> {
+    let (path, is_dir) = {
+        let guard = state.session.lock().unwrap();
+        let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
+        if id as usize >= tree.len() || tree.node(id).has_flag(flags::REMOVED) {
+            return Err("That item is gone.".into());
+        }
+        (tree.path(id), tree.node(id).kind == NodeKind::Dir)
+    };
+    if !path.is_absolute() {
+        return Err("Pick a drive or folder inside it.".into());
+    }
+    let owner = owner_window(&app);
+    match action.as_str() {
+        "open" => actions::open(&path, owner),
+        "terminal" => {
+            let dir = if is_dir {
+                path.as_path()
+            } else {
+                path.parent().unwrap_or(&path)
+            };
+            actions::terminal(dir, owner)
+        }
+        "properties" => app
+            .run_on_main_thread(move || {
+                let _ = actions::properties(&path, owner);
+            })
+            .map_err(|e| e.to_string()),
+        _ => Err(format!("Unknown action {action}.")),
+    }
+}
+
+/// Folders to leave out of the next scans (Settings).
+#[tauri::command]
+fn set_exclude(state: State<AppState>, exclude: Vec<String>) {
+    *state.exclude.lock().unwrap() = exclude;
+}
+
+/// Where the user's category rules go, and whether the file exists yet.
+#[tauri::command]
+fn rules_info(app: AppHandle) -> Result<(String, bool), String> {
+    let file = rules_path(&app)?;
+    Ok((with_appdata(&file.display().to_string()), file.exists()))
+}
+
+fn rules_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join(USER_RULES))
+}
+
+const RULES_TEMPLATE: &str = r#"# Your own category rules. They add to the built-in ones, and a category
+# with the id of a built-in one replaces it. Save, then use "Reload rules"
+# in Bytescape's settings.
+#
+# The format, with every option, is described at the top of the built-in
+# rules: https://github.com/raullopesalves/bytescape/blob/main/crates/categories/rules/default.toml
+#
+# An example (remove the # to use it):
+#
+# [[category]]
+# id = "my-projects"
+# name = "My projects"
+# color = "teal"
+# paths = ["D:/Projects/**"]
+"#;
+
+/// Opens the user's rules file in its editor, creating it with some help
+/// text first if it doesn't exist.
+#[tauri::command]
+fn open_rules(app: AppHandle) -> Result<(), String> {
+    let file = rules_path(&app)?;
+    if !file.exists() {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&file, RULES_TEMPLATE).map_err(|e| e.to_string())?;
+    }
+    let owner = owner_window(&app);
+    let path = file.display().to_string();
+    // .toml often has no program; Notepad always works.
+    elevation::shell_execute("open", &path, "", true, owner).or_else(|_| {
+        elevation::shell_execute("open", "notepad.exe", &format!("\"{path}\""), true, owner)
+    })
+}
+
+/// Reads the rules file again and re-categorises the current scan.
+#[tauri::command]
+fn reload_rules(app: AppHandle, state: State<AppState>) -> Result<Option<String>, String> {
+    let (rules, rules_file, rules_error) = load_rules(&app);
+    let mut guard = state.session.lock().unwrap();
+    let s = guard.as_mut().ok_or("No scan yet.")?;
+    rules.apply(&mut s.tree);
+    s.dominant = treemap::dominant_categories(&s.tree, rules.categories().len());
+    s.rules = rules;
+    s.rules_file = rules_file;
+    s.rules_error = rules_error.clone();
+    s.search = None;
+    s.generation += 1;
+    Ok(rules_error)
+}
+
+/// Opens a page of the project's site in the browser (About).
+#[tauri::command]
+fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    const SITE: &str = "https://github.com/raullopesalves/bytescape";
+    if url != SITE && !url.starts_with(&format!("{SITE}/")) {
+        return Err("Only the project's own pages open from here.".into());
+    }
+    elevation::shell_execute("open", &url, "", true, owner_window(&app))
+}
+
+/// Sends `event` with the scan's progress every 100 ms until `done` is set.
+fn progress_ticker(
+    app: &AppHandle,
+    event: &'static str,
+    progress: Arc<Progress>,
+    stage: Stage,
+    done: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
+    let app = app.clone();
+    let start = Instant::now();
+    thread::spawn(move || {
+        while !done.load(Ordering::Relaxed) {
+            let (files, dirs, bytes) = progress.snapshot();
+            let msg = ProgressMsg {
+                files,
+                dirs,
+                bytes,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+                stage: stage.lock().unwrap().clone(),
+            };
+            let _ = app.emit(event, msg);
+            thread::sleep(Duration::from_millis(100));
+        }
+    })
+}
+
+/// Scans folder `id` again and puts the result in place of its old
+/// contents. Runs in the background like a scan (and `cancel_scan` stops
+/// it); sends `rescan-progress`, then `rescan-done` or `rescan-error`.
+#[tauri::command]
+fn rescan_folder(app: AppHandle, state: State<AppState>, id: NodeId) -> Result<String, String> {
+    let path = {
+        let guard = state.session.lock().unwrap();
+        let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
+        if id as usize >= tree.len() {
+            return Err(format!("No node {id}."));
+        }
+        let n = tree.node(id);
+        if n.kind != NodeKind::Dir || n.has_flag(flags::REMOVED) {
+            return Err("Only folders can be rescanned.".into());
+        }
+        tree.path(id)
+    };
+    if !path.is_absolute() {
+        return Err("Rescan everything instead.".into());
+    }
+    let mut scanning = state.scanning.lock().unwrap();
+    if scanning.is_some() {
+        return Err("A scan is already running.".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    *scanning = Some(cancel.clone());
+    let shown = path.display().to_string();
+    thread::spawn(move || run_rescan(app, id, path, cancel));
+    Ok(shown)
+}
+
+fn run_rescan(app: AppHandle, id: NodeId, path: PathBuf, cancel: Arc<AtomicBool>) {
+    let progress = Arc::new(Progress::default());
+    let opts = ScanOptions {
+        progress: Some(progress.clone()),
+        cancel: Some(cancel),
+        exclude: app.state::<AppState>().exclude.lock().unwrap().clone(),
+        ..ScanOptions::default()
+    };
+    let done = Arc::new(AtomicBool::new(false));
+    let ticker = progress_ticker(
+        &app,
+        "rescan-progress",
+        progress,
+        Stage::default(),
+        done.clone(),
+    );
+    let result = scanner::scan(&path, &opts);
+    done.store(true, Ordering::Relaxed);
+    let _ = ticker.join();
+
+    let state = app.state::<AppState>();
+    let outcome = result.map_err(|e| e.to_string()).and_then(|mut fresh| {
+        let mut guard = state.session.lock().unwrap();
+        let s = guard.as_mut().ok_or("The scan was closed.")?;
+        s.rules.apply(&mut fresh);
+        if !s.tree.replace_contents(id, fresh) {
+            return Err("That folder can't be rescanned any more.".to_string());
+        }
+        s.dominant = treemap::dominant_categories(&s.tree, s.rules.categories().len());
+        s.search = None;
+        s.generation += 1;
+        s.dupes = None;
+        // What was in the basket from the old contents is gone.
+        let gone: Vec<NodeId> = s
+            .basket
+            .items()
+            .iter()
+            .copied()
+            .filter(|&i| s.tree.node(i).has_flag(flags::REMOVED))
+            .collect();
+        s.basket.remove_all(&gone);
+        Ok(())
+    });
+    *state.scanning.lock().unwrap() = None;
+    let _ = match outcome {
+        Ok(()) => app.emit("rescan-done", id),
+        Err(e) => app.emit("rescan-error", e),
+    };
+}
+
 /// Every fixed and removable drive, one after the other, under one root.
 /// Drives that can't be read (no media) are left out.
-fn scan_all_drives(opts: &ScanOptions) -> Result<ScanTree, scanner::ScanError> {
-    let mut trees = Vec::new();
-    for d in drives::list().into_iter().filter(|d| d.kind != "network") {
-        match scanner::scan(Path::new(&d.path), opts) {
-            Ok(t) => trees.push(t),
-            Err(scanner::ScanError::Cancelled) => return Err(scanner::ScanError::Cancelled),
-            Err(_) => {}
-        }
-    }
-    if trees.is_empty() {
-        return Err(scanner::ScanError::Root(std::io::Error::other(
-            "no drive could be read",
-        )));
-    }
-    Ok(ScanTree::combine("All drives", trees))
+fn scan_all_drives(opts: &ScanOptions, stage: &Stage) -> Result<ScanTree, scanner::ScanError> {
+    let drives = scanner::local_drives();
+    scanner::scan_drives(&drives, opts, |k, d| {
+        *stage.lock().unwrap() = Some(format!("{} ({} of {})", d.display(), k + 1, drives.len()));
+    })
 }
 
 /// The built-in rules plus the user's rules file, if there is one. A broken
@@ -1382,6 +1557,13 @@ fn main() {
             search_children,
             search_matches_in,
             file_types,
+            rescan_folder,
+            item_action,
+            set_exclude,
+            rules_info,
+            open_rules,
+            reload_rules,
+            open_link,
             cleanup_status,
             run_cleanup,
             shell_menu_state,
@@ -1415,6 +1597,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_rules_template_is_valid_and_adds_nothing() {
+        let rules = categories::Rules::with_user_rules("template", super::RULES_TEMPLATE).unwrap();
+        assert_eq!(
+            rules.categories().len(),
+            categories::Rules::defaults().categories().len()
+        );
+    }
+
+    #[test]
     fn explorer_drive_arguments() {
         assert_eq!(super::clean_arg(r#"C:""#), r"C:\");
         assert_eq!(super::clean_arg(r"D:\Games"), r"D:\Games");
@@ -1422,28 +1613,12 @@ mod tests {
     }
 
     #[test]
-    fn file_types_and_finding_paths() {
+    fn finding_paths() {
         let dir = tempfile::tempdir().unwrap();
         let r = dir.path();
         std::fs::create_dir_all(r.join("Sub")).unwrap();
-        std::fs::write(r.join("a.MP4"), vec![0u8; 3000]).unwrap();
         std::fs::write(r.join("Sub/b.mp4"), vec![0u8; 2000]).unwrap();
-        std::fs::write(r.join("c.tar.gz"), vec![0u8; 500]).unwrap();
-        std::fs::write(r.join(".gitignore"), vec![0u8; 10]).unwrap();
-        std::fs::write(r.join("README"), vec![0u8; 20]).unwrap();
         let tree = scanner::scan(r, &scanner::ScanOptions::default()).unwrap();
-        let t: Vec<(String, u64, u64)> = super::file_type_totals(&tree)
-            .into_iter()
-            .map(|t| (t.ext, t.files, t.size))
-            .collect();
-        assert_eq!(
-            t,
-            [
-                ("mp4".into(), 2, 5000),
-                ("gz".into(), 1, 500),
-                (String::new(), 2, 30)
-            ]
-        );
         let sub = super::find_node(&tree, &r.join("sub").join("B.mp4")).unwrap();
         assert_eq!(&*tree.node(sub).name, "b.mp4");
         assert_eq!(super::find_node(&tree, r), Some(tree.root()));

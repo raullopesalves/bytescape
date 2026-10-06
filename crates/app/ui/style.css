@@ -20,8 +20,9 @@
   color-scheme: light;
 }
 
+/* Dark colours: Windows' setting, unless Settings picks light or dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #17181c;
     --panel: #1f2026;
     --text: #e6e7ea;
@@ -42,6 +43,27 @@
     --map-dim: rgba(18, 19, 23, 0.8);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #17181c;
+  --panel: #1f2026;
+  --text: #e6e7ea;
+  --muted: #979ba5;
+  --line: #2e3038;
+  --hover: #272930;
+  --select: #2c3a5c;
+  --accent: #6d8ff0;
+  --accent-text: #0e1220;
+  --bar: #3a4a74;
+  --warn: #f0a070;
+  --safe: #7fd08e;
+  --map-bg: #121317;
+  --map-frame-a: #2b2d35;
+  --map-frame-b: #383b45;
+  --map-rest: rgba(18, 19, 23, 0.5);
+  --map-other: #4a4d57;
+  --map-dim: rgba(18, 19, 23, 0.8);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -95,6 +117,21 @@ button.link:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 .status.error { color: var(--warn); }
+.toolbar-end { margin-left: auto; flex: none; }
+.scan-stage { margin: -6px 0 12px; color: var(--muted); }
+/* Settings and About */
+.set { padding: 10px 0; border-top: 1px solid var(--line); }
+.set:first-child { border-top: none; padding-top: 0; }
+.set h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.set .note { margin: 0 0 6px; }
+.set label { display: flex; gap: 8px; align-items: center; margin: 3px 0; }
+.set .row-of { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.set textarea { width: 100%; font: 12px/1.4 Consolas, "Cascadia Mono", monospace; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+.set code { font-size: 12px; word-break: break-all; }
+.about-head { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
+.about-head .logo-slot { width: 56px; height: 56px; }
+.about-head b { font-size: 18px; }
+.about-links { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 10px; }
 
 main {
   flex: 1;
@@ -220,6 +257,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   flex-direction: column;
 }
 .menu button { border: none; background: none; text-align: left; padding: 6px 10px; border-radius: 5px; }
+.menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 2px; }
 .menu button:hover, .menu button:focus { background: var(--hover); outline: none; }
 
 /* Confirmation dialog */

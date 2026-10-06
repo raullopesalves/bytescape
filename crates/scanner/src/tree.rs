@@ -38,6 +38,9 @@ pub mod flags {
     /// Deleted after the scan (see [`ScanTree::remove`](crate::ScanTree::remove)):
     /// sizes are zero and the node should be hidden.
     pub const REMOVED: u8 = 1 << 6;
+    /// A folder left out on purpose (`ScanOptions::exclude`): listed, but
+    /// its contents weren't read and add nothing to the totals.
+    pub const EXCLUDED: u8 = 1 << 7;
 }
 
 /// One file, folder, link or error entry.
@@ -187,6 +190,119 @@ impl ScanTree {
             n.files = 0;
         }
         true
+    }
+
+    /// Replaces what folder `id` holds with `fresh`, a new scan of that same
+    /// folder. The old contents stay in the arena flagged
+    /// [`REMOVED`](flags::REMOVED), so ids never change; the new ones are
+    /// appended, so children still come after their parents. The folder and
+    /// its ancestors get the new totals. Hardlinks between the folder and the
+    /// rest of the tree aren't matched up again. Returns false (and changes
+    /// nothing) for a file, a removed node, or if the arena would overflow.
+    pub fn replace_contents(&mut self, id: NodeId, fresh: ScanTree) -> bool {
+        let n = &self.nodes[id as usize];
+        if n.kind != NodeKind::Dir
+            || n.has_flag(flags::REMOVED)
+            || fresh.nodes.is_empty()
+            || (self.nodes.len() + fresh.nodes.len()) as u64 > NodeId::MAX as u64
+        {
+            return false;
+        }
+        let (old_size, old_alloc, old_files) = (n.size, n.alloc, n.files);
+
+        let mut stack: Vec<NodeId> = self.child_ids(id).collect();
+        while let Some(i) = stack.pop() {
+            stack.extend(self.child_ids(i));
+            let n = &mut self.nodes[i as usize];
+            if n.has_flag(flags::REMOVED) {
+                continue;
+            }
+            match n.kind {
+                NodeKind::File => {
+                    self.stats.files -= 1;
+                    if n.has_flag(flags::HARDLINK_DUP) {
+                        self.stats.hardlink_dups -= 1;
+                    }
+                }
+                NodeKind::Dir => self.stats.dirs -= 1,
+                NodeKind::Symlink => self.stats.symlinks -= 1,
+                NodeKind::Error => self.stats.errors = self.stats.errors.saturating_sub(1),
+            }
+            n.flags |= flags::REMOVED;
+            n.size = 0;
+            n.alloc = 0;
+            n.files = 0;
+        }
+
+        let base = self.nodes.len() as NodeId;
+        let map = |k: NodeId| if k == 0 { id } else { base + k - 1 };
+        let r = &fresh.nodes[0];
+        let (size, alloc, files) = (r.size, r.alloc, r.files);
+        let n = &mut self.nodes[id as usize];
+        n.first_child = if r.child_count > 0 {
+            map(r.first_child)
+        } else {
+            base
+        };
+        n.child_count = r.child_count;
+        n.size = size;
+        n.alloc = alloc;
+        n.files = files;
+        n.modified = r.modified;
+        n.flags = (n.flags & !flags::READ_ERROR) | (r.flags & flags::READ_ERROR);
+        let root = self.root();
+        if id != root {
+            let mut cur = self.nodes[id as usize].parent;
+            loop {
+                let a = &mut self.nodes[cur as usize];
+                a.size = a.size + size - old_size;
+                a.alloc = a.alloc + alloc - old_alloc;
+                a.files = a.files + files - old_files;
+                if cur == root {
+                    break;
+                }
+                cur = a.parent;
+            }
+        }
+
+        let s = &fresh.stats;
+        self.stats.files += s.files;
+        self.stats.dirs += s.dirs.saturating_sub(1); // its root is `id`, still counted
+        self.stats.symlinks += s.symlinks;
+        self.stats.errors += s.errors;
+        self.stats.hardlink_dups += s.hardlink_dups;
+        self.errors
+            .extend(fresh.errors.into_iter().map(|(i, e)| (map(i), e)));
+        self.nodes
+            .extend(fresh.nodes.into_iter().skip(1).map(|mut n| {
+                n.parent = map(n.parent);
+                n.first_child = map(n.first_child);
+                n
+            }));
+        true
+    }
+
+    /// Leaves out the folders `exclude` matches, for a tree read all at once
+    /// (the MFT): their contents are removed and they are flagged
+    /// [`EXCLUDED`](flags::EXCLUDED).
+    pub(crate) fn leave_out(&mut self, exclude: &crate::Exclude) {
+        if exclude.is_empty() {
+            return;
+        }
+        // Parents come first, so a folder inside a left-out one is
+        // already removed when it's reached.
+        for id in 1..self.nodes.len() as NodeId {
+            let n = &self.nodes[id as usize];
+            if n.kind != NodeKind::Dir || n.flags & (flags::REMOVED | flags::EXCLUDED) != 0 {
+                continue;
+            }
+            if exclude.matches(&n.name, || self.path(id).display().to_string()) {
+                for c in self.child_ids(id) {
+                    self.remove(c);
+                }
+                self.nodes[id as usize].flags |= flags::EXCLUDED;
+            }
+        }
     }
 
     /// Ids of the direct children of `id`, in name order.
