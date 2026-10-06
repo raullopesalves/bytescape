@@ -16,6 +16,7 @@ mod scan_history;
 mod search;
 mod shell_menu;
 mod treemap;
+mod updates;
 mod wincleanup;
 
 use std::collections::HashMap;
@@ -1367,7 +1368,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         // Restores the window's size and position from the last run.
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
+        .manage(updates::Pending::default())
         .invoke_handler(tauri::generate_handler![
             initial_path,
             pick_folder,
@@ -1389,6 +1392,9 @@ fn main() {
             run_cleanup,
             shell_menu_state,
             set_shell_menu,
+            updates::check_update,
+            updates::install_update,
+            updates::app_version,
             clear_search,
             basket_view,
             basket_add,

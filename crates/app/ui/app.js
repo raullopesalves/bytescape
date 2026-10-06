@@ -1735,6 +1735,63 @@ function endSplash() {
 }
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 setTimeout(endSplash, reduceMotion ? 300 : 1700);
+
+// ---------- updates ----------
+
+let update = null; // { version, current, notes, date } while one is available
+
+/** Asks GitHub for a newer release. Quiet unless `manual`. */
+async function checkUpdate(manual) {
+  if (manual) setStatus('Checking for updates…');
+  try {
+    update = await invoke('check_update');
+  } catch (e) {
+    if (manual) setStatus(`Couldn't check for updates: ${e}`, true);
+    return;
+  }
+  $('update').hidden = !update;
+  if (update) {
+    $('update').textContent = `Update to ${update.version}`;
+    if (manual) {
+      setStatus(`Bytescape ${update.version} is available.`);
+      openUpdate();
+    }
+  } else if (manual) {
+    setStatus('Bytescape is up to date.');
+  }
+}
+
+function openUpdate() {
+  if (!update) return;
+  const when = update.date ? `, released ${esc(update.date)}` : '';
+  modal(`Update to Bytescape ${update.version}?`, `
+    <p>You have ${esc(update.current)}; version ${esc(update.version)} is out${when}.</p>
+    ${update.notes ? `<div class="update-notes">${esc(update.notes)}</div>` : ''}
+    <p class="note">Bytescape closes, the update installs with a small progress window, and Bytescape starts again. Your settings, scan history and category rules stay. The download is checked against Bytescape's update key before it runs.</p>`,
+  [['Later', '', closeModal], ['Install and restart', 'primary', installUpdate]]);
+}
+
+async function installUpdate() {
+  closeModal();
+  setStatus('Downloading the update…');
+  try {
+    await invoke('install_update'); // on success the app closes for the installer
+  } catch (e) {
+    setStatus(`The update didn't install: ${e}`, true);
+  }
+}
+
+listen('update-progress', (e) => {
+  const { done, total } = e.payload;
+  setStatus(total ? `Downloading the update… ${Math.round((done * 100) / total)}%` : `Downloading the update… ${human(done)}`);
+});
+$('update').addEventListener('click', openUpdate);
+$('check-updates').addEventListener('click', () => checkUpdate(true));
+$('auto-update').checked = store.get('autoUpdate') !== 'false';
+$('auto-update').addEventListener('change', () => store.set('autoUpdate', $('auto-update').checked));
+invoke('app_version').then((v) => { $('app-version').textContent = v; }).catch(() => {});
+// A while after starting, so the first scan isn't slowed down.
+if ($('auto-update').checked) setTimeout(() => checkUpdate(false), 4000);
 $('splash').addEventListener('click', endSplash);
 
 /** Recently scanned folders, newest first: [{ path, at }]. */

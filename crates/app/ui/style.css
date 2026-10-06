@@ -544,6 +544,10 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .start-actions { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; align-items: center; }
 .path-form { display: flex; gap: 6px; flex: 1 1 320px; }
 .path-form input { flex: 1; min-width: 0; }
+.update-btn { margin-left: auto; border-color: var(--safe); color: var(--safe); font-weight: 600; }
+.update-notes { white-space: pre-wrap; max-height: 40vh; overflow-y: auto; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.version-line { margin-top: 10px; color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.version-line label { display: inline-flex; gap: 6px; align-items: center; }
 .shell-toggle { display: flex; gap: 8px; align-items: center; margin-top: 18px; color: var(--muted); font-size: 13px; }
 .d-kind { margin-left: auto; font-size: 11px; color: var(--muted); }
 

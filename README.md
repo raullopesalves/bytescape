@@ -52,6 +52,8 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   by Windows itself.
 - **All drives at once**, network shares (`\\server\share`), and "Scan with
   Bytescape" in Explorer's right-click menu (added by the installer).
+- **Updates:** Bytescape checks for a new release when it starts and offers
+  to install it (signed, so a tampered download is refused).
 - **Export** a folder's contents or search results as CSV or JSON.
 
 ![Tree and treemap](docs/screenshots/tree-and-treemap.png)
@@ -146,7 +148,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The Release workflow (`.github/workflows/release.yml`) checks the tag matches
+The release needs the update signing key in the repository secret
+`TAURI_SIGNING_PRIVATE_KEY` (see CLAUDE.md). The Release workflow
+(`.github/workflows/release.yml`) checks the tag matches
 both versions, runs the tests, builds the installer, the standalone app and
 the CLI on a clean Windows runner, and attaches them with checksums to a
 **draft** release. Review the draft on GitHub, then publish it.

@@ -6,6 +6,7 @@
     <button id="rescan" hidden>Rescan</button>
     <button id="cancel" hidden>Cancel</button>
     <button id="elevate" hidden title="Reads the drive's file table directly, which is several times faster. Windows asks for permission first.">Scan faster as administrator</button>
+    <button id="update" class="update-btn" hidden>Update available</button>
     <div id="status" class="status" aria-live="polite"></div>
   </header>
 
@@ -46,6 +47,8 @@
         <button id="start-back" class="big" hidden>Back to results</button>
       </div>
       <label class="shell-toggle"><input type="checkbox" id="shell-menu"> Show “Scan with Bytescape” when right-clicking a folder or drive in Explorer</label>
+      <p class="version-line">Bytescape <span id="app-version"></span> · <button class="link" id="check-updates">Check for updates</button>
+        · <label><input type="checkbox" id="auto-update" checked> Check when Bytescape starts</label></p>
     </div>
   </div>
 

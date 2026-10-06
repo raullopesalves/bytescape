@@ -60,9 +60,14 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      # Signs the installer for the in-app updater (the .sig goes into
+      # latest.json). The key has no password.
       - name: Build the installer and the app
         working-directory: crates/app
-        run: cargo tauri build --ci -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: cargo tauri build --ci --config tauri.updater.conf.json -- --locked
 
       - name: Build the CLI
         run: cargo build --release --locked -p bytescape-cli
@@ -77,6 +82,20 @@ jobs:
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
           Get-Content dist/SHA256SUMS.txt
+          # What the app's updater reads from the latest release.
+          $setup = "Bytescape_${env:VERSION}_x64-setup.exe"
+          [ordered]@{
+            version = $env:VERSION
+            notes = "See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }} for what's new."
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content "target/release/bundle/nsis/$setup.sig" -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$setup"
+              }
+            }
+          } | ConvertTo-Json -Depth 4 | Set-Content dist/latest.json -Encoding utf8
+          Get-Content dist/latest.json
 
       - name: Create a draft release
         env:
@@ -92,6 +111,7 @@ jobs:
           - ``Bytescape_${env:VERSION}_x64_portable.exe``: the app without installing (needs WebView2, which Windows 10 and 11 normally have).
           - ``bytescape-cli_${env:VERSION}_x64.exe``: the command-line tool.
           - ``SHA256SUMS.txt``: checksums of the files above.
+          - ``latest.json``: read by Bytescape's update button.
           "@
           gh release create "${{ github.ref_name }}" (Get-ChildItem dist -File).FullName `
             --draft --title "Bytescape ${env:VERSION}" --notes $notes --generate-notes

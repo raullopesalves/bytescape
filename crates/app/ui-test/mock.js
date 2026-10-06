@@ -303,6 +303,13 @@ window.__TAURI__ = {
           systemDrive: 'C:', windowsOldSize: null, winsxsSize: null, elevated: false,
         };
         case 'run_cleanup': mockCleanups.push(args.what); return true;
+        case 'app_version': return '0.1.0';
+        case 'check_update': return location.search.includes('update')
+          ? { version: '0.2.0', current: '0.1.0', notes: '- Faster scans\n- A File types view', date: '2026-10-20' } : null;
+        case 'install_update':
+          for (let k = 1; k <= 4; k++) setTimeout(() => handlers['update-progress']?.({ payload: { done: k * 1e6, total: 4e6 } }), k * 50);
+          await new Promise((r) => setTimeout(r, 300));
+          throw new Error('(mock) the installer would start here');
         case 'shell_menu_state': return mockShellMenu;
         case 'set_shell_menu': mockShellMenu = args.on; return mockShellMenu;
         default: return null;

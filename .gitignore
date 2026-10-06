@@ -2,6 +2,7 @@ target/
 *.json
 !**/rules/*.json
 !crates/app/tauri.conf.json
+!crates/app/tauri.updater.conf.json
 !crates/app/capabilities/*.json
 crates/app/gen/
 .vscode/*
