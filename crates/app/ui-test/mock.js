@@ -192,6 +192,10 @@ window.__TAURI__ = {
           return searchState.ids.slice(args.offset, args.offset + args.limit)
             .map((id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, name]) => name).join('\\') }));
         }
+        case 'search_ids': {
+          if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');
+          return args.ranges.flatMap(([a, b]) => searchState.ids.slice(a, b));
+        }
         case 'basket_view': return basketView();
         case 'basket_add':
           for (const id of args.ids) {

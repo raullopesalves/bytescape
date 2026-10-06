@@ -38,8 +38,9 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   shrank since an earlier scan.
 - **Duplicates.** Finds files with identical contents while reading as little
   as possible (sizes, then the first and last 16 KB, then whole files).
-- **Cleanup basket.** Collect what you want to remove, review it with a
-  warning for anything risky, then move it to the Recycle Bin (or delete it
+- **Cleanup basket.** Collect what you want to remove (select several rows
+  with Ctrl+click, Shift+click, Shift+arrows or Ctrl+A, then press B or
+  Delete, or right-click), review it with a warning for anything risky, then move it to the Recycle Bin (or delete it
   for good, if you ask twice).
 - **Export** a folder's contents or search results as CSV or JSON.
 

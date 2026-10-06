@@ -28,7 +28,9 @@ let cats = new Map();      // category id -> category
 let cache = new Map();     // folder id -> its children, sorted
 let expanded = new Set();  // folder ids
 let visible = [];          // rows on screen in order: { row, depth, parentSize }
-let selected = -1;         // index into `visible`
+let selected = -1;         // index into `visible`: the cursor
+let marked = new Set();    // ids of the selected rows (one or more)
+let anchorId = -1;         // node id where a Shift range starts
 let sort = { key: 'size', desc: true };
 
 // ---------- formatting ----------
@@ -125,6 +127,8 @@ async function loadResult() {
   const root = summary.root;
   visible = [{ row: root, depth: 0, parentSize: root.size }];
   selected = 0;
+  marked = new Set();
+  anchorId = root.id;
   search = null;
   histCompare = null;
   dupesKeep = new Map();
@@ -243,15 +247,19 @@ function collapse(i) {
   const v = visible[i];
   if (!expanded.has(v.row.id)) return;
   let j = i + 1;
+  const had = marked.size;
   while (j < visible.length && visible[j].depth > v.depth) {
     expanded.delete(visible[j].row.id);
+    marked.delete(visible[j].row.id); // nothing hidden stays selected
     j++;
   }
+  if (!marked.size) marked.add(v.row.id);
   expanded.delete(v.row.id);
   visible.splice(i + 1, j - i - 1);
   if (selected > i && selected < j) selected = i;
   else if (selected >= j) selected -= j - i - 1;
-  render();
+  if (marked.size !== had || !marked.has(visible[selected].row.id)) select(selected, 'keep');
+  else render();
 }
 
 function toggle(i) {
@@ -300,7 +308,8 @@ function rowHtml(i) {
   const pct = parentSize > 0 ? (r.size * 100) / parentSize : 0;
   const cls = ['row', r.kind];
   const tags = [];
-  if (i === selected) cls.push('sel');
+  if (marked.has(r.id)) cls.push('sel');
+  if (i === selected && (marked.size > 1 || !marked.has(r.id))) cls.push('cur');
   if (r.flags & FLAG.DUP) { cls.push('dup'); tags.push('hardlink, counted once'); }
   if (r.flags & FLAG.ONLINE) { cls.push('online'); tags.push('online-only'); }
   if (r.flags & FLAG.COMPRESSED) tags.push('compressed');
@@ -353,13 +362,33 @@ function ensureVisible(i) {
   else if (top + ROW_H > sc.scrollTop + sc.clientHeight) sc.scrollTop = top + ROW_H - sc.clientHeight;
 }
 
-async function select(i) {
+/**
+ * Moves the cursor to row i. `how`: 'one' selects just that row; 'toggle'
+ * adds or removes it (Ctrl+click); 'range' selects from the anchor to it
+ * (Shift); 'addRange' adds that range (Ctrl+Shift); 'keep' only moves the
+ * cursor (Ctrl+arrows).
+ */
+async function select(i, how = 'one') {
   if (i < 0 || i >= visible.length) return;
+  const id = visible[i].row.id;
+  if (how === 'toggle') {
+    if (marked.has(id)) marked.delete(id);
+    else marked.add(id);
+    anchorId = id;
+  } else if (how === 'range' || how === 'addRange') {
+    let a = visible.findIndex((v) => v.row.id === anchorId);
+    if (a < 0) a = Math.max(0, selected);
+    if (how === 'range') marked = new Set();
+    for (let k = Math.min(a, i); k <= Math.max(a, i); k++) marked.add(visible[k].row.id);
+  } else if (how !== 'keep') {
+    marked = new Set([id]);
+    anchorId = id;
+  }
   selected = i;
   ensureVisible(i);
   render();
   drawOverlay();
-  const id = visible[i].row.id;
+  if (marked.size > 1) return showMany(marked.size, treeMarkedBytes());
   try {
     const path = await invoke('node_path', { id });
     if (visible[selected]?.row.id === id) {
@@ -369,6 +398,40 @@ async function select(i) {
   } catch (e) {
     $('selpath').textContent = String(e);
   }
+}
+
+/** Size of the selected rows, not counting rows inside a selected folder twice. */
+function treeMarkedBytes() {
+  let bytes = 0;
+  let inside = -1; // depth of the selected folder being walked through
+  for (const v of visible) {
+    if (inside >= 0 && v.depth > inside) continue;
+    inside = -1;
+    if (marked.has(v.row.id)) {
+      bytes += v.row.size;
+      inside = v.depth;
+    }
+  }
+  return bytes;
+}
+
+/** Whether tree row i is in the basket, itself or inside a folder that is. */
+function treeRowInBasket(i) {
+  for (; i >= 0; i = parentIndex(i)) if (basketIds.has(visible[i].row.id)) return true;
+  return false;
+}
+
+/** Status bar for a selection of several rows. */
+function showMany(n, bytes) {
+  $('selpath').textContent = `${fmtInt(n)} items selected${bytes === undefined ? '' : ` · ${human(bytes)}`}`;
+  $('reveal').hidden = true;
+}
+
+/** How a click or key with these modifiers changes the selection. */
+function selectHow(e, moving) {
+  if (e.shiftKey) return e.ctrlKey ? 'addRange' : 'range';
+  if (e.ctrlKey) return moving ? 'keep' : 'toggle';
+  return 'one';
 }
 
 function parentIndex(i) {
@@ -383,13 +446,20 @@ function onKey(e) {
   if (selected < 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
   const v = visible[selected];
+  const how = selectHow(e, true);
   switch (e.key) {
-    case 'ArrowDown': select(Math.min(visible.length - 1, selected + 1)); break;
-    case 'ArrowUp': select(Math.max(0, selected - 1)); break;
-    case 'PageDown': select(Math.min(visible.length - 1, selected + page)); break;
-    case 'PageUp': select(Math.max(0, selected - page)); break;
-    case 'Home': select(0); break;
-    case 'End': select(visible.length - 1); break;
+    case 'ArrowDown': select(Math.min(visible.length - 1, selected + 1), how); break;
+    case 'ArrowUp': select(Math.max(0, selected - 1), how); break;
+    case 'PageDown': select(Math.min(visible.length - 1, selected + page), how); break;
+    case 'PageUp': select(Math.max(0, selected - page), how); break;
+    case 'Home': select(0, how); break;
+    case 'End': select(visible.length - 1, how); break;
+    case ' ': if (!e.ctrlKey) return; select(selected, 'toggle'); break;
+    case 'a': case 'A':
+      if (!e.ctrlKey) return;
+      marked = new Set(visible.map((x) => x.row.id));
+      select(selected, 'keep');
+      break;
     case 'ArrowRight':
       if (v.row.kind === 'dir' && v.row.children > 0) {
         if (!expanded.has(v.row.id)) expand(selected);
@@ -401,7 +471,7 @@ function onKey(e) {
       else select(parentIndex(selected));
       break;
     case 'Enter': toggle(selected); break;
-    case 'b': case 'B': case 'Delete': basketToggle(v.row.id); break;
+    case 'b': case 'B': case 'Delete': basketToggleSelection(); break;
     default: return;
   }
   e.preventDefault();
@@ -707,7 +777,7 @@ async function applyFilters() {
     $('f-summary').textContent = '';
     setView(view === 'results' ? 'tree' : view);
   } else {
-    search = { generation: r.generation, count: r.count, bytes: r.bytes, items: [], pages: new Set(), sel: -1, anc: [] };
+    search = { generation: r.generation, count: r.count, bytes: r.bytes, items: [], pages: new Set(), sel: -1, anc: [], marked: new Set(), anchor: -1 };
     const what = r.count === 1 ? 'match' : 'matches';
     $('f-summary').textContent = r.count === 0
       ? 'Nothing matches these filters.'
@@ -775,7 +845,8 @@ function resultHtml(i) {
   const pct = summary.root.size > 0 ? (r.size * 100) / summary.root.size : 0;
   const cat = cats.get(r.category);
   const cls = ['row', r.kind];
-  if (i === search.sel) cls.push('sel');
+  if (search.marked.has(i)) cls.push('sel');
+  if (i === search.sel && (search.marked.size > 1 || !search.marked.has(i))) cls.push('cur');
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
@@ -807,14 +878,28 @@ function renderResults() {
   rows.innerHTML = html;
 }
 
-async function selectResult(i) {
+/** Moves the cursor to result i; `how` as for `select`. */
+async function selectResult(i, how = 'one') {
   const s = search;
   if (!s || i < 0 || i >= s.count) return;
+  if (how === 'toggle') {
+    if (s.marked.has(i)) s.marked.delete(i);
+    else s.marked.add(i);
+    s.anchor = i;
+  } else if (how === 'range' || how === 'addRange') {
+    const a = s.anchor >= 0 ? s.anchor : Math.max(0, s.sel);
+    if (how === 'range') s.marked = new Set();
+    for (let k = Math.min(a, i); k <= Math.max(a, i); k++) s.marked.add(k);
+  } else if (how !== 'keep') {
+    s.marked = new Set([i]);
+    s.anchor = i;
+  }
   s.sel = i;
   s.anc = [];
   ensureVisible(i);
   render();
   drawOverlay();
+  if (s.marked.size > 1) return showMany(s.marked.size);
   const it = s.items[i];
   if (!it) return;
   $('selpath').textContent = it.path;
@@ -847,15 +932,22 @@ function onResultsKey(e) {
   if (!s || s.count === 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
   const at = Math.max(0, s.sel);
+  const how = selectHow(e, true);
   switch (e.key) {
-    case 'ArrowDown': selectResult(Math.min(s.count - 1, s.sel + 1)); break;
-    case 'ArrowUp': selectResult(Math.max(0, at - 1)); break;
-    case 'PageDown': selectResult(Math.min(s.count - 1, at + page)); break;
-    case 'PageUp': selectResult(Math.max(0, at - page)); break;
-    case 'Home': selectResult(0); break;
-    case 'End': selectResult(s.count - 1); break;
+    case 'ArrowDown': selectResult(Math.min(s.count - 1, s.sel + 1), how); break;
+    case 'ArrowUp': selectResult(Math.max(0, at - 1), how); break;
+    case 'PageDown': selectResult(Math.min(s.count - 1, at + page), how); break;
+    case 'PageUp': selectResult(Math.max(0, at - page), how); break;
+    case 'Home': selectResult(0, how); break;
+    case 'End': selectResult(s.count - 1, how); break;
+    case ' ': if (!e.ctrlKey) return; selectResult(at, 'toggle'); break;
+    case 'a': case 'A':
+      if (!e.ctrlKey) return;
+      s.marked = new Set(Array.from({ length: s.count }, (_, k) => k));
+      selectResult(at, 'keep');
+      break;
     case 'Enter': showInTree(at); break;
-    case 'b': case 'B': case 'Delete': basketToggle(currentId()); break;
+    case 'b': case 'B': case 'Delete': basketToggleSelection(); break;
     default: return;
   }
   e.preventDefault();
@@ -864,6 +956,32 @@ function onResultsKey(e) {
 /** Id of the selected node in whichever list is showing. */
 function currentId() {
   return view === 'results' ? search?.items[search.sel]?.row.id : visible[selected]?.row.id;
+}
+
+/** Ids of every selected row in the list showing (the cursor's if none). */
+async function selectionIds() {
+  if (view !== 'results') return marked.size ? [...marked] : [currentId()];
+  const s = search;
+  if (!s) return [];
+  if (!s.marked.size) return [currentId()];
+  // Results load a page at a time, so ask for the ids of whole ranges.
+  const idx = [...s.marked].sort((a, b) => a - b);
+  const ranges = [];
+  for (const k of idx) {
+    const last = ranges[ranges.length - 1];
+    if (last && last[1] === k) last[1] = k + 1;
+    else ranges.push([k, k + 1]);
+  }
+  return invoke('search_ids', { generation: s.generation, ranges });
+}
+
+/** B or Delete: the selected rows go in the basket, or out if all are in. */
+async function basketToggleSelection() {
+  try {
+    await basketToggle(await selectionIds());
+  } catch (e) {
+    setStatus(String(e), true);
+  }
 }
 
 // ---------- cleanup basket ----------
@@ -880,9 +998,18 @@ function setBasket(v) {
   drawOverlay();
 }
 
-/** Adds the node to the basket, or takes it out if it's in. */
+/**
+ * Adds the node (or a list of nodes) to the basket. A node that's in is
+ * taken out; a list is taken out only if every node in it is in.
+ */
 async function basketToggle(id) {
-  if (id === undefined || !summary) return;
+  if (!summary) return;
+  if (Array.isArray(id)) {
+    const ids = id.filter((x) => x !== undefined && x !== summary.root.id);
+    if (ids.length !== 1 || id.length !== 1) return basketToggleMany(ids, ids.length < id.length);
+    id = ids[0];
+  }
+  if (id === undefined) return;
   if (id === summary.root.id) {
     setStatus("The scanned folder itself can't go in the basket; pick what's inside it.");
     return;
@@ -897,6 +1024,35 @@ async function basketToggle(id) {
   if (removing) setStatus('Taken out of the cleanup basket.');
   else if (basketIds.has(id)) setStatus(`Added ${basket.items.find((it) => it.id === id).name} to the cleanup basket.`);
   else setStatus('Already in the basket, as part of a folder.');
+}
+
+async function basketToggleMany(ids, skippedRoot) {
+  const rootNote = skippedRoot ? " The scanned folder itself can't go in." : '';
+  if (!ids.length) {
+    if (skippedRoot) setStatus("The scanned folder itself can't go in the basket; pick what's inside it.");
+    return;
+  }
+  // Adding, unless that changes nothing (everything is in already, some
+  // perhaps as part of a selected folder): then they come out.
+  const before = basket.items.map((it) => it.id).join();
+  let removed = 0;
+  try {
+    if (!ids.every((x) => basketIds.has(x))) setBasket(await invoke('basket_add', { ids }));
+    if (basket.items.map((it) => it.id).join() === before) {
+      removed = ids.filter((x) => basketIds.has(x)).length;
+      setBasket(await invoke('basket_remove', { ids }));
+    }
+  } catch (e) {
+    setStatus(String(e), true);
+    return;
+  }
+  if (removed) {
+    setStatus(`Took ${plural(removed, 'item')} out of the cleanup basket.${rootNote}`);
+    return;
+  }
+  const inside = ids.filter((x) => !basketIds.has(x)).length;
+  const insideNote = inside ? ` ${fmtInt(inside)} of them ${inside === 1 ? 'is' : 'are'} inside folders in the basket.` : '';
+  setStatus(`Added ${plural(ids.length, 'item')} to the cleanup basket.${insideNote}${rootNote}`);
 }
 
 function renderBasket() {
@@ -934,11 +1090,14 @@ function openMenuAt(x, y, actions) {
   menu.querySelector('button').focus();
 }
 
-function openMenu(e, id, { zoomId, showInTree } = {}) {
+function openMenu(e, id, { zoomId, showInTree, many, allIn } = {}) {
   e.preventDefault();
   if (id === undefined) return;
+  const toggle = many
+    ? [allIn ? `Take ${fmtInt(many)} items out of cleanup basket` : `Add ${fmtInt(many)} items to cleanup basket`, basketToggleSelection]
+    : [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)];
   const actions = [
-    [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)],
+    toggle,
     ['Show in Explorer', () => invoke('reveal', { id }).catch((err) => setStatus(String(err), true))],
   ];
   if (showInTree) actions.push(['Show in tree', () => { setView('tree'); revealInTree(id); }]);
@@ -957,14 +1116,22 @@ function closeMenu() {
 /** The context menu for row i of the list showing, at (x, y). */
 function rowMenu(i, x, y) {
   const at = { preventDefault() {}, clientX: x, clientY: y };
+  // Right-clicking a selected row keeps the selection, as in Explorer.
   if (view === 'results') {
-    selectResult(i);
+    const keep = search?.marked.has(i) && search.marked.size > 1;
+    selectResult(i, keep ? 'keep' : 'one');
     const r = search?.items[i]?.row;
-    openMenu(at, r?.id, { showInTree: true, zoomId: r?.kind === 'dir' ? r.id : undefined });
+    const many = keep ? search.marked.size : 0;
+    const paths = basket.items.map((it) => it.path);
+    const covered = (p) => paths.some((b) => p === b || p.startsWith(b.endsWith('\\') ? b : b + '\\'));
+    const allIn = many > 0 && [...search.marked].every((k) => search.items[k] && covered(search.items[k].path));
+    openMenu(at, r?.id, { showInTree: !many, many, allIn, zoomId: r?.kind === 'dir' ? r.id : undefined });
   } else {
-    select(i);
     const r = visible[i].row;
-    openMenu(at, r.id, { zoomId: r.kind === 'dir' ? r.id : undefined });
+    const keep = marked.has(r.id) && marked.size > 1;
+    select(i, keep ? 'keep' : 'one');
+    const allIn = keep && visible.every((v, k) => !marked.has(v.row.id) || treeRowInBasket(k));
+    openMenu(at, r.id, { many: keep ? marked.size : 0, allIn, zoomId: r.kind === 'dir' ? r.id : undefined });
   }
 }
 
@@ -1487,9 +1654,10 @@ $('rows').addEventListener('click', (e) => {
   const el = e.target.closest('.row');
   if (!el) return;
   const i = Number(el.dataset.i);
-  if (view === 'results') return selectResult(i);
-  if (e.target.closest('.twisty')) toggle(i);
-  select(i);
+  const how = selectHow(e, false);
+  if (view === 'results') return selectResult(i, how);
+  if (how === 'one' && e.target.closest('.twisty')) toggle(i);
+  select(i, how);
 });
 $('rows').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.row');

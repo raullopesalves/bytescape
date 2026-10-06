@@ -437,6 +437,29 @@ fn search_page(
         .collect())
 }
 
+/// Node ids of the results in `ranges` (start, end exclusive) of search
+/// `generation`, for acting on many selected results without their details.
+#[tauri::command]
+fn search_ids(
+    state: State<AppState>,
+    generation: u64,
+    ranges: Vec<(usize, usize)>,
+) -> Result<Vec<NodeId>, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let st = s
+        .search
+        .as_ref()
+        .filter(|st| st.generation == generation)
+        .ok_or("That search is out of date.")?;
+    let ids = &st.results.ids;
+    Ok(ranges
+        .into_iter()
+        .flat_map(|(a, b)| ids.get(a.min(ids.len())..b.min(ids.len())).unwrap_or(&[]))
+        .copied()
+        .collect())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BasketItem {
@@ -1050,6 +1073,7 @@ fn main() {
             treemap,
             search,
             search_page,
+            search_ids,
             clear_search,
             basket_view,
             basket_add,

@@ -572,10 +572,13 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   height: 26px;
   cursor: default;
   white-space: nowrap;
+  user-select: none; /* Shift+click selects rows, not text */
 }
 .row > div { padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
 .row:hover { background: var(--hover); }
 .row.sel { background: var(--select); }
+/* The keyboard cursor, when it isn't simply the one selected row. */
+.row.cur { outline: 1px solid var(--accent); outline-offset: -1px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .name-cell { display: flex; align-items: center; min-width: 0; }
