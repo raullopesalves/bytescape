@@ -107,12 +107,7 @@ impl Row {
         Row {
             id,
             name: n.name.to_string(),
-            kind: match n.kind {
-                NodeKind::File => "file",
-                NodeKind::Dir => "dir",
-                NodeKind::Symlink => "link",
-                NodeKind::Error => "error",
-            },
+            kind: kind_name(n.kind),
             size: n.size,
             alloc: n.alloc,
             files: n.files,
@@ -144,6 +139,15 @@ impl Row {
         r.children = matched_children(tree, results, id).count() as u32;
         r.hit = results.marks[id as usize] & search::SELF != 0;
         r
+    }
+}
+
+fn kind_name(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::File => "file",
+        NodeKind::Dir => "dir",
+        NodeKind::Symlink => "link",
+        NodeKind::Error => "error",
     }
 }
 
@@ -629,7 +633,7 @@ fn basket_view_of(s: &Session) -> BasketView {
     };
     for &id in s.basket.items() {
         let a = basket::assess(&s.tree, &s.rules, &s.dominant, id);
-        let row = Row::new(&s.tree, id);
+        let n = s.tree.node(id);
         let size = effective_size(&s.tree, id);
         match a.level {
             Level::Blocked => v.blocked += 1,
@@ -643,10 +647,10 @@ fn basket_view_of(s: &Session) -> BasketView {
         }
         v.items.push(BasketItem {
             id,
-            name: row.name,
+            name: n.name.to_string(),
             path: s.tree.path(id).display().to_string(),
-            kind: row.kind,
-            size: row.size,
+            kind: kind_name(n.kind),
+            size: n.size,
             level: a.level,
             reason: a.reason,
         });
@@ -681,20 +685,12 @@ fn basket_view(state: State<AppState>) -> Result<BasketView, String> {
 
 #[tauri::command]
 fn basket_add(state: State<AppState>, ids: Vec<NodeId>) -> Result<BasketView, String> {
-    with_basket(&state, |s| {
-        for id in ids {
-            s.basket.add(&s.tree, id);
-        }
-    })
+    with_basket(&state, |s| s.basket.add_all(&s.tree, &ids))
 }
 
 #[tauri::command]
 fn basket_remove(state: State<AppState>, ids: Vec<NodeId>) -> Result<BasketView, String> {
-    with_basket(&state, |s| {
-        for id in ids {
-            s.basket.remove(id);
-        }
-    })
+    with_basket(&state, |s| s.basket.remove_all(&ids))
 }
 
 #[tauri::command]
@@ -707,9 +703,7 @@ fn basket_clear(state: State<AppState>) -> Result<BasketView, String> {
 fn basket_add_suggested(state: State<AppState>) -> Result<BasketView, String> {
     with_basket(&state, |s| {
         let (ids, _, _) = basket::cleanup_candidates(&s.tree, &s.rules, &s.dominant, usize::MAX);
-        for id in ids {
-            s.basket.add(&s.tree, id);
-        }
+        s.basket.add_all(&s.tree, &ids);
     })
 }
 

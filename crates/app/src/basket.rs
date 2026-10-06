@@ -6,6 +6,7 @@
 //! checked again; if it changed kind since the scan, became a link, or is now
 //! online-only, it is left alone.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -49,21 +50,53 @@ impl Basket {
     /// Adds `id` unless it, or a folder above it, is already in. Items below
     /// it are dropped, since deleting it covers them. The scanned folder
     /// itself is never added. Returns whether it was added.
+    #[cfg(test)]
     pub fn add(&mut self, tree: &ScanTree, id: NodeId) -> bool {
-        if id == tree.root()
-            || id as usize >= tree.len()
-            || tree.node(id).has_flag(flags::REMOVED)
-            || self.items.iter().any(|&i| i == id || is_below(tree, id, i))
-        {
-            return false;
+        let before = self.items.contains(&id);
+        self.add_all(tree, &[id]);
+        !before && self.items.contains(&id)
+    }
+
+    /// Adds every id, as `add` one at a time would, but in one pass over
+    /// the basket (a folder's matches can be tens of thousands of files).
+    pub fn add_all(&mut self, tree: &ScanTree, ids: &[NodeId]) {
+        let new: Vec<NodeId> = ids
+            .iter()
+            .copied()
+            .filter(|&id| can_add(tree, id))
+            .collect();
+        if new.is_empty() {
+            return;
         }
-        self.items.retain(|&i| !is_below(tree, i, id));
-        self.items.push(id);
-        true
+        let all: HashSet<NodeId> = self.items.iter().chain(&new).copied().collect();
+        let inside_another = |id: NodeId| {
+            let mut cur = id;
+            while cur != tree.root() {
+                cur = tree.node(cur).parent;
+                if all.contains(&cur) {
+                    return true;
+                }
+            }
+            false
+        };
+        let mut seen = HashSet::with_capacity(all.len());
+        let items: Vec<NodeId> = self
+            .items
+            .iter()
+            .chain(&new)
+            .copied()
+            .filter(|&id| seen.insert(id) && !inside_another(id))
+            .collect();
+        self.items = items;
     }
 
     pub fn remove(&mut self, id: NodeId) {
-        self.items.retain(|&i| i != id);
+        self.remove_all(&[id]);
+    }
+
+    pub fn remove_all(&mut self, ids: &[NodeId]) {
+        let gone: HashSet<NodeId> = ids.iter().copied().collect();
+        self.items.retain(|i| !gone.contains(i));
     }
 
     pub fn clear(&mut self) {
@@ -71,16 +104,12 @@ impl Basket {
     }
 }
 
-/// True if `id` is strictly below `folder`.
-fn is_below(tree: &ScanTree, id: NodeId, folder: NodeId) -> bool {
-    let mut cur = id;
-    while cur != tree.root() {
-        cur = tree.node(cur).parent;
-        if cur == folder {
-            return true;
-        }
-    }
-    false
+/// The scanned folder, whole drives and deleted nodes never go in.
+fn can_add(tree: &ScanTree, id: NodeId) -> bool {
+    id != tree.root()
+        && (id as usize) < tree.len()
+        && !tree.node(id).has_flag(flags::REMOVED)
+        && tree.path(id).parent().is_some()
 }
 
 /// How risky deleting node `id` is, and why. `dominant` gives each folder's
@@ -498,6 +527,19 @@ mod tests {
         basket.remove(a);
         assert!(basket.add(&tree, b));
         assert_eq!(basket.items(), [z, b]);
+
+        // Many at once, in any order, folds the same way.
+        for ids in [[x, y, a, z, b], [a, b, x, z, y], [z, x, b, y, a]] {
+            let mut many = Basket::default();
+            many.add_all(&tree, &ids);
+            let mut want = vec![z, a];
+            want.sort_unstable();
+            let mut got = many.items().to_vec();
+            got.sort_unstable();
+            assert_eq!(got, want, "{ids:?}");
+        }
+        basket.remove_all(&[z, b, b]);
+        assert!(basket.items().is_empty());
     }
 
     #[test]

@@ -225,7 +225,7 @@ function renderSide() {
     const used = s.driveTotal - s.driveFree;
     const pct = (n) => Math.min(100, (n * 100) / s.driveTotal);
     drive = `<div class="drive-use" title="The drive: ${human(s.driveFree)} free. The darker part is what you scanned.">
-      <span class="du-pct">${pct(used).toFixed(0)}%</span> of the drive used · <b>${human(used)}</b> of ${human(s.driveTotal)}
+      <span class="du-pct">${pct(used).toFixed(0)}%</span> of the ${r.name === 'All drives' ? 'drives' : 'drive'} used · <b>${human(used)}</b> of ${human(s.driveTotal)}
       <div class="du-bar"><span class="du-used" style="width:${pct(used)}%"></span><span class="du-scan" style="width:${pct(Math.min(r.alloc, used))}%"></span></div>
     </div>`;
   }
@@ -529,6 +529,12 @@ function treeMarkedBytes() {
 function treeRowInBasket(i) {
   for (; i >= 0; i = parentIndex(i)) if (basketIds.has(visible[i].row.id)) return true;
   return false;
+}
+
+/** A drive (in an All drives scan), which the basket refuses. */
+function isDriveRoot(id) {
+  const row = visible.find((v) => v.row.id === id)?.row;
+  return !!row && /^([A-Za-z]:\\|\\\\[^\\]+\\[^\\]+\\?)$/.test(row.name);
 }
 
 /** Status bar for a selection of several rows. */
@@ -1231,6 +1237,7 @@ async function basketToggle(id) {
   }
   if (removing) setStatus('Taken out of the cleanup basket.');
   else if (basketIds.has(id)) setStatus(`Added ${basket.items.find((it) => it.id === id).name} to the cleanup basket.`);
+  else if (isDriveRoot(id)) setStatus("A whole drive can't go in the basket; pick what's inside it.");
   else setStatus('Already in the basket, as part of a folder.');
 }
 
@@ -1263,16 +1270,21 @@ async function basketToggleMany(ids, skippedRoot) {
   setStatus(`Added ${plural(ids.length, 'item')} to the cleanup basket.${insideNote}${rootNote}`);
 }
 
+const BASKET_SIDE = 100;  // rows in the side panel
+const BASKET_BIG = 1000;  // rows in the big view and the delete dialog
+
 function renderBasket() {
   const b = basket;
   $('basket-count').textContent = b.items.length ? `(${b.items.length})` : '';
   $('basket-empty').hidden = b.items.length > 0;
   $('basket-foot').hidden = b.items.length === 0;
-  $('basket-items').innerHTML = b.items.map((it) => `<li class="lvl-${it.level}" data-id="${it.id}" title="${esc(it.path)}">
+  // Drawing tens of thousands of rows is slow; the big view has more.
+  const more = b.items.length - BASKET_SIDE;
+  $('basket-items').innerHTML = b.items.slice(0, BASKET_SIDE).map((it) => `<li class="lvl-${it.level}" data-id="${it.id}" title="${esc(it.path)}">
       <div class="b-head"><span class="b-dot"></span><span class="b-name">${esc(it.name)}</span>
         <span class="b-size">${human(it.size)}</span><button class="b-x" data-remove="${it.id}" title="Take out of the basket" aria-label="Take ${esc(it.name)} out of the basket">×</button></div>
       ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
-    </li>`).join('');
+    </li>`).join('') + (more > 0 ? `<li class="b-more" data-open-basket>…and ${fmtInt(more)} more. Open the basket to see them.</li>` : '');
   $('basket-total').textContent = b.count
     ? `${plural(b.count, 'item')} · ${human(b.bytes)}`
     : 'Nothing here can be deleted.';
@@ -1406,8 +1418,10 @@ function basketBody() {
       <div class="b-path">${esc(it.path)}</div>
       ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
     </li>`;
+  const more = b.items.length - BASKET_BIG;
   return `<p class="b-sum">${sum}${care}</p>
-    <ul class="confirm-list big">${[...b.items].sort((x, y) => y.size - x.size).map(item).join('')}</ul>`;
+    <ul class="confirm-list big">${[...b.items].sort((x, y) => y.size - x.size).slice(0, BASKET_BIG).map(item).join('')}</ul>
+    ${more > 0 ? `<p class="note">…and ${fmtInt(more)} smaller items.</p>` : ''}`;
 }
 
 /** The basket in a big dialog: every item with its path and notes, largest first. */
@@ -1442,7 +1456,8 @@ function openDeleteDialog() {
       ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
     </li>`;
   const body = `
-    <ul class="confirm-list">${go.map(item).join('')}</ul>
+    <ul class="confirm-list">${go.slice(0, BASKET_BIG).map(item).join('')}</ul>
+    ${go.length > BASKET_BIG ? `<p class="note">…and ${fmtInt(go.length - BASKET_BIG)} more.</p>` : ''}
     ${kept.length ? `<p class="note">Won't be deleted: ${kept.map((it) => esc(it.name)).join(', ')}.</p>` : ''}
     <fieldset class="method">
       <label><input type="radio" name="method" value="recycle" checked> <span>Move to the Recycle Bin
@@ -2154,6 +2169,9 @@ $('basket-items').addEventListener('click', (e) => {
   }
 });
 $('basket-delete').addEventListener('click', openDeleteDialog);
+$('basket-items').addEventListener('click', (e) => {
+  if (e.target.closest('[data-open-basket]')) openBasket();
+});
 $('basket-open').addEventListener('click', openBasket);
 $('basket-open').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBasket(); }

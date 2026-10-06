@@ -181,6 +181,7 @@ main {
 .basket-items li { padding: 5px 6px 5px 8px; margin: 2px 0; border-radius: 6px; cursor: pointer; border-left: 2px solid var(--del); }
 .basket-items li:hover { background: var(--hover); }
 .basket-items li.lvl-blocked { border-left-color: var(--muted); }
+.basket-items li.b-more { border-left: none; color: var(--accent); font-size: 12px; }
 .basket-box .b-size, .basket-total { color: var(--del-text); }
 .b-head { display: flex; align-items: center; gap: 6px; }
 .b-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
