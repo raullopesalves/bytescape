@@ -65,7 +65,8 @@
       <section class="totals" id="totals"></section>
       <h2>By category</h2>
       <ul class="cats" id="cats"></ul>
-      <h2>Cleanup basket <span id="basket-count" class="count"></span></h2>
+      <section class="basket-box" id="basket">
+      <h2 class="basket-head" id="basket-open" role="button" tabindex="0" title="Open the basket in a bigger view"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M6 1h4l1 1h3v2H2V2h3zM3 5h10l-1 10H4z" fill="currentColor"/></svg> Cleanup basket <span id="basket-count" class="count"></span><span class="b-open">Open</span></h2>
       <p class="note" id="basket-empty">Right-click anything, or press B, to add it here (Ctrl+click or Shift+click picks several). Nothing is deleted until you review it.</p>
       <ul class="basket-items" id="basket-items"></ul>
       <div class="basket-foot" id="basket-foot" hidden>
@@ -75,6 +76,7 @@
           <button id="basket-clear" class="link">Empty basket</button>
         </div>
       </div>
+      </section>
       <p class="note" id="rules-note"></p>
     </aside>
 

@@ -219,7 +219,7 @@ function renderSide() {
     const used = s.driveTotal - s.driveFree;
     const pct = (n) => Math.min(100, (n * 100) / s.driveTotal);
     drive = `<div class="drive-use" title="The drive: ${human(s.driveFree)} free. The darker part is what you scanned.">
-      <b>${human(used)}</b> of ${human(s.driveTotal)} used on the drive
+      <span class="du-pct">${pct(used).toFixed(0)}%</span> of the drive used · <b>${human(used)}</b> of ${human(s.driveTotal)}
       <div class="du-bar"><span class="du-used" style="width:${pct(used)}%"></span><span class="du-scan" style="width:${pct(Math.min(r.alloc, used))}%"></span></div>
     </div>`;
   }
@@ -410,6 +410,7 @@ function rowHtml(i) {
   const tags = [];
   if (marked.has(r.id)) cls.push('sel');
   if (i === selected && (marked.size > 1 || !marked.has(r.id))) cls.push('cur');
+  if (basketIds.has(r.id)) cls.push('inbasket');
   if (r.flags & FLAG.DUP) { cls.push('dup'); tags.push('hardlink, counted once'); }
   if (r.flags & FLAG.ONLINE) { cls.push('online'); tags.push('online-only'); }
   if (r.flags & FLAG.COMPRESSED) tags.push('compressed');
@@ -721,7 +722,7 @@ function drawOverlay() {
   ctx.setLineDash([4 * dpr, 3 * dpr]);
   for (const id of basketIds) {
     const r = map.index.get(id);
-    if (r !== undefined && r > 0) outline(r, '#e0a030', 1.5);
+    if (r !== undefined && r > 0) outline(r, '#e04848', 2);
   }
   ctx.setLineDash([]);
   // Outlining the whole map (the zoomed-in folder) would just frame it.
@@ -955,6 +956,7 @@ function resultHtml(i) {
   const cat = cats.get(r.category);
   const cls = ['row', r.kind];
   if (search.marked.has(i)) cls.push('sel');
+  if (basketIds.has(r.id)) cls.push('inbasket');
   if (i === search.sel && (search.marked.size > 1 || !search.marked.has(i))) cls.push('cur');
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
@@ -1211,6 +1213,13 @@ function renderBasket() {
     ? `${plural(b.count, 'item')} · ${human(b.bytes)}`
     : 'Nothing here can be deleted.';
   $('basket-delete').disabled = b.count === 0;
+  if (basketOpen) {
+    const body = $('modal-body');
+    const top = body.scrollTop;
+    body.innerHTML = basketBody();
+    body.scrollTop = top;
+    $('modal-actions').children[2].disabled = b.count === 0;
+  }
 }
 
 // Context menu on tree rows, results and treemap blocks.
@@ -1297,6 +1306,10 @@ function keyMenu(e) {
 // ----- deleting -----
 
 function modal(title, body, actions) {
+  basketOpen = false;
+  $('modal').querySelector('.modal-card').classList.remove('wide');
+  $('modal-body').onclick = null;
+  $('modal-body').onchange = null;
   $('modal-title').textContent = title;
   $('modal-body').innerHTML = body;
   $('modal-actions').innerHTML = actions.map(([label, cls], k) => `<button class="${cls || ''}" data-k="${k}">${label}</button>`).join('');
@@ -1309,6 +1322,49 @@ function modal(title, body, actions) {
 
 function closeModal() {
   $('modal').hidden = true;
+  basketOpen = false;
+}
+
+// ----- the basket, opened big -----
+
+let basketOpen = false;
+
+function basketBody() {
+  const b = basket;
+  if (!b.items.length) return '<p class="note">The basket is empty. Right-click anything, or press B, to add it.</p>';
+  const sum = b.count
+    ? `<b>${plural(b.count, 'item')} · ${human(b.bytes)}</b> will be deleted when you confirm.`
+    : 'Nothing here can be deleted.';
+  const care = b.danger ? ` ${plural(b.danger, 'item')} ${b.danger === 1 ? 'needs' : 'need'} extra care (see the red notes).` : '';
+  const item = (it) => `<li class="lvl-${it.level}">
+      <div class="b-head"><span class="b-dot"></span><button class="link b-name" data-show="${it.id}" title="Show in the tree">${esc(it.name)}</button>
+        <span class="b-size">${human(it.size)}</span><button class="b-x" data-remove="${it.id}" title="Take out of the basket" aria-label="Take ${esc(it.name)} out of the basket">×</button></div>
+      <div class="b-path">${esc(it.path)}</div>
+      ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
+    </li>`;
+  return `<p class="b-sum">${sum}${care}</p>
+    <ul class="confirm-list big">${[...b.items].sort((x, y) => y.size - x.size).map(item).join('')}</ul>`;
+}
+
+/** The basket in a big dialog: every item with its path and notes, largest first. */
+function openBasket() {
+  modal('Cleanup basket', basketBody(), [
+    ['Empty basket', '', async () => setBasket(await invoke('basket_clear'))],
+    ['Close', '', closeModal],
+    ['Review and delete…', 'danger-btn', openDeleteDialog],
+  ]);
+  basketOpen = true;
+  $('modal').querySelector('.modal-card').classList.add('wide');
+  $('modal-actions').children[2].disabled = basket.count === 0;
+  $('modal-body').onclick = (e) => {
+    const rm = e.target.closest('[data-remove]')?.dataset.remove;
+    if (rm !== undefined) return basketToggle(Number(rm));
+    const show = e.target.closest('[data-show]')?.dataset.show;
+    if (show === undefined) return;
+    closeModal();
+    setView('tree');
+    revealInTree(Number(show)).then(() => $('scroller').focus());
+  };
 }
 
 function openDeleteDialog() {
@@ -1849,6 +1905,11 @@ $('basket-items').addEventListener('click', (e) => {
   }
 });
 $('basket-delete').addEventListener('click', openDeleteDialog);
+$('basket-open').addEventListener('click', openBasket);
+$('basket-open').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBasket(); }
+});
+$('basket-total').addEventListener('click', openBasket);
 $('basket-clear').addEventListener('click', async () => setBasket(await invoke('basket_clear')));
 
 $('rows').addEventListener('contextmenu', (e) => {

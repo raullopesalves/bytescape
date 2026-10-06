@@ -130,6 +130,7 @@ main {
 }
 .totals dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
 .drive-use { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.drive-use .du-pct { font-size: 15px; font-weight: 600; color: var(--text); }
 .drive-use b { color: var(--text); font-weight: 600; }
 .du-bar { position: relative; height: 6px; margin-top: 4px; border-radius: 3px; background: var(--hover); overflow: hidden; }
 .du-bar span { position: absolute; top: 0; left: 0; height: 100%; }
@@ -161,10 +162,26 @@ main {
 .note { color: var(--muted); font-size: 12px; margin-top: 14px; word-break: break-word; }
 .side h2 .count { font-weight: normal; }
 
-/* Cleanup basket */
-.basket-items { list-style: none; margin: 0; padding: 0; }
-.basket-items li { padding: 5px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
+/* Cleanup basket: red, since what's in it is to be deleted. */
+.basket-box {
+  --del: #e04848;
+  --del-text: #e86464;
+  --del-bg: rgba(224, 72, 72, .08);
+  margin: 18px -8px 0;
+  padding: 2px 8px 10px;
+  border-left: 3px solid var(--del);
+  border-radius: 0 8px 8px 0;
+  background: var(--del-bg);
+}
+.side .basket-head { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--del-text); cursor: pointer; border-radius: 4px; }
+.basket-head:hover .b-open, .basket-head:focus-visible .b-open { text-decoration: underline; }
+.basket-head .b-open { margin-left: auto; font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--accent); }
+/* Scrolls on its own, like the categories. */
+.basket-items { list-style: none; margin: 0 -6px; padding: 0 6px; max-height: 30vh; overflow-y: auto; }
+.basket-items li { padding: 5px 6px 5px 8px; margin: 2px 0; border-radius: 6px; cursor: pointer; border-left: 2px solid var(--del); }
 .basket-items li:hover { background: var(--hover); }
+.basket-items li.lvl-blocked { border-left-color: var(--muted); }
+.basket-box .b-size, .basket-total { color: var(--del-text); }
 .b-head { display: flex; align-items: center; gap: 6px; }
 .b-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .b-size { font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -178,12 +195,15 @@ main {
 .lvl-danger .b-reason { color: #e05a5a; }
 .lvl-blocked .b-name { text-decoration: line-through; color: var(--muted); }
 .basket-foot { margin-top: 8px; }
-.basket-total { font-weight: 600; font-variant-numeric: tabular-nums; margin-bottom: 6px; }
+.basket-total { font-weight: 600; font-variant-numeric: tabular-nums; margin-bottom: 6px; cursor: pointer; }
 .basket-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 button.danger-btn { background: #c63d3d; border-color: #c63d3d; color: #fff; }
 button.danger-btn:hover { filter: brightness(1.08); background: #c63d3d; }
 button:disabled { opacity: .5; cursor: default; filter: none; }
-.tag.basket { color: #e0a030; }
+.tag.basket { color: #e86464; }
+/* In the cleanup basket: tinted red and struck through. */
+.row.inbasket:not(.sel) { background: rgba(224, 72, 72, .10); }
+.row.inbasket .label { color: #e86464; text-decoration: line-through rgba(224, 72, 72, .55); }
 
 /* Context menu */
 .menu {
@@ -229,6 +249,15 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .confirm-list li { padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .confirm-list li:last-child { border-bottom: none; }
 .confirm-list .b-path { font-size: 12px; color: var(--muted); word-break: break-all; margin-left: 14px; }
+/* The basket opened big. */
+.modal-card.wide { width: min(980px, 100%); }
+.confirm-list.big { max-height: none; }
+.confirm-list.big li { border-left: 3px solid #e04848; }
+.confirm-list.big li.lvl-blocked { border-left-color: var(--muted); }
+.confirm-list.big .b-name { text-align: left; padding: 0; font-weight: 600; }
+.confirm-list.big .b-size { color: #e86464; font-weight: 600; }
+.b-sum { margin: 0 0 10px; }
+.b-sum b { color: #e86464; }
 .method { border: none; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
 .method label, .ack { display: flex; gap: 8px; align-items: baseline; }
 .method .note, .ack .note { margin: 0; }
