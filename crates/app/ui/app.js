@@ -295,6 +295,50 @@ function setSort(key) {
   rebuild();
 }
 
+// ---------- columns ----------
+
+// Widths in px. Name and Folder share the free space (at least `w` px)
+// until they're resized. Drag a header's right edge to resize (double-click
+// resets); widths are remembered. The list scrolls sideways when the columns
+// don't fit.
+const COLS = {
+  name: { label: 'Name', w: 180, flex: 1, sort: 'name' },
+  folder: { label: 'Folder', w: 160, flex: 1.3 },
+  size: { label: 'Size', w: 84, num: true, sort: 'size' },
+  pct: { label: '% of parent', w: 120 },
+  alloc: { label: 'On disk', w: 84, num: true, sort: 'alloc' },
+  files: { label: 'Files', w: 76, num: true, sort: 'files' },
+  modified: { label: 'Modified', w: 92, num: true, sort: 'modified' },
+  category: { label: 'Category', w: 160, sort: 'category' },
+};
+const TREE_COLS = ['name', 'size', 'pct', 'alloc', 'files', 'modified', 'category'];
+const RESULT_COLS = ['name', 'folder', 'size', 'pct', 'alloc', 'files', 'modified', 'category'];
+const MIN_COL = 40;
+let colWidths = {};
+
+const colWidth = (k) => colWidths[k] ?? COLS[k].w;
+const columnsOf = (v) => (v === 'results' ? RESULT_COLS : TREE_COLS);
+
+function applyColumns() {
+  const keys = columnsOf(view);
+  const flex = (k) => COLS[k].flex && colWidths[k] === undefined;
+  let cols = keys.map((k) => (flex(k) ? `minmax(${COLS[k].w}px, ${COLS[k].flex}fr)` : `${colWidth(k)}px`)).join(' ');
+  if (!keys.some(flex)) cols += ' minmax(0, 1fr)'; // fills the rest
+  const pane = $('thead').parentElement;
+  pane.style.setProperty('--cols', cols);
+  pane.style.setProperty('--cols-min', `${keys.reduce((t, k) => t + colWidth(k), 0)}px`);
+}
+
+function renderHead() {
+  $('thead').innerHTML = columnsOf(view).map((k) => {
+    const c = COLS[k];
+    const label = k === 'pct' && view === 'results' ? '% of all' : c.label;
+    return `<div${c.sort ? ` data-key="${c.sort}"` : ''}${c.num ? ' class="num"' : ''} role="columnheader">${label}<span class="grip" data-grip="${k}" title="Drag to resize, double-click to reset"></span></div>`;
+  }).join('');
+  markSortHeader();
+  applyColumns();
+}
+
 function markSortHeader() {
   for (const el of $('thead').children) {
     const on = el.dataset.key === sort.key;
@@ -813,7 +857,7 @@ function setView(v) {
   }
   $('viewbar').querySelector('[data-view=results]').hidden = !search;
   $('thead').classList.toggle('results', v === 'results');
-  $('thead').children[2].textContent = v === 'results' ? '% of all' : '% of parent';
+  renderHead();
   if (v === 'overview') renderOverview();
   else if (v === 'history') renderHistory();
   else if (v === 'dupes') renderDupes();
@@ -841,7 +885,6 @@ function resultHtml(i) {
     return `<div class="row" data-i="${i}"><div class="name-cell"><span class="label">…</span></div></div>`;
   }
   const r = it.row;
-  const parent = it.path.slice(0, Math.max(0, it.path.length - r.name.length - 1));
   const pct = summary.root.size > 0 ? (r.size * 100) / summary.root.size : 0;
   const cat = cats.get(r.category);
   const cls = ['row', r.kind];
@@ -850,7 +893,8 @@ function resultHtml(i) {
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
-    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span><span class="tag">${esc(parent)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
+    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
+    <div class="folder-cell">${folderLinks(it)}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
     <div class="num">${human(r.alloc)}</div>
@@ -876,6 +920,33 @@ function renderResults() {
   let html = '';
   for (let i = first; i < last; i++) html += resultHtml(i);
   rows.innerHTML = html;
+}
+
+/** Moves the cursor to result i; `how` as for `select`. */
+/**
+ * A result's folder as links, one per folder from the scanned one down;
+ * data-k is the folder's depth below the scanned folder (0 = it).
+ */
+function folderLinks(it) {
+  const root = summary.root.name;
+  const base = root.replace(/\\$/, '');
+  const parent = it.path.slice(0, Math.max(0, it.path.length - it.row.name.length)).replace(/\\$/, '');
+  if (!parent.startsWith(base)) return esc(parent);
+  const names = [root, ...parent.slice(base.length).split('\\').filter(Boolean)];
+  return names.map((n, k) => `<span class="crumb" data-k="${k}" title="Show in the tree">${esc(n)}</span>`)
+    .reduce((html, link, k) => html + (k && !names[k - 1].endsWith('\\') ? '\\' : '') + link, '');
+}
+
+/** Shows the folder at depth k above result i in the tree. */
+async function showFolderInTree(i, k) {
+  const it = search?.items[i];
+  if (!it) return;
+  const chain = await invoke('ancestors', { id: it.row.id });
+  const id = chain[k]?.[0];
+  if (id === undefined) return;
+  setView('tree');
+  await revealInTree(id);
+  $('scroller').focus();
 }
 
 /** Moves the cursor to result i; `how` as for `select`. */
@@ -1646,6 +1717,7 @@ $('reveal').addEventListener('click', () => {
 });
 
 $('thead').addEventListener('click', (e) => {
+  if (e.target.closest('[data-grip]')) return;
   const key = e.target.closest('[data-key]')?.dataset.key;
   if (key && view === 'tree') setSort(key);
 });
@@ -1655,6 +1727,8 @@ $('rows').addEventListener('click', (e) => {
   if (!el) return;
   const i = Number(el.dataset.i);
   const how = selectHow(e, false);
+  const crumb = e.target.closest('.crumb');
+  if (crumb && how === 'one') return showFolderInTree(i, Number(crumb.dataset.k));
   if (view === 'results') return selectResult(i, how);
   if (how === 'one' && e.target.closest('.twisty')) toggle(i);
   select(i, how);
@@ -1734,7 +1808,47 @@ $('cats').addEventListener('click', (e) => {
   applyFilters();
 });
 
-$('scroller').addEventListener('scroll', renderSoon);
+$('scroller').addEventListener('scroll', () => {
+  $('thead').scrollLeft = $('scroller').scrollLeft;
+  renderSoon();
+});
+// Resizing columns.
+$('thead').addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('[data-grip]');
+  if (!grip || e.button !== 0) return;
+  e.preventDefault();
+  const k = grip.dataset.grip;
+  const start = grip.parentElement.getBoundingClientRect().width;
+  const x0 = e.clientX;
+  grip.setPointerCapture(e.pointerId);
+  grip.classList.add('drag');
+  const move = (ev) => {
+    colWidths[k] = Math.max(MIN_COL, Math.round(start + ev.clientX - x0));
+    applyColumns();
+  };
+  const done = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', done);
+    grip.removeEventListener('pointercancel', done);
+    grip.classList.remove('drag');
+    store.set('columns', JSON.stringify(colWidths));
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', done);
+  grip.addEventListener('pointercancel', done);
+});
+$('thead').addEventListener('dblclick', (e) => {
+  const k = e.target.closest('[data-grip]')?.dataset.grip;
+  if (!k) return;
+  delete colWidths[k];
+  applyColumns();
+  store.set('columns', JSON.stringify(colWidths));
+});
+try {
+  const saved = JSON.parse(store.get('columns') ?? '{}');
+  for (const k of Object.keys(COLS)) if (Number.isFinite(saved[k])) colWidths[k] = Math.max(MIN_COL, saved[k]);
+} catch { /* defaults */ }
+renderHead();
 $('scroller').addEventListener('keydown', onKey);
 new ResizeObserver(renderSoon).observe($('scroller'));
 

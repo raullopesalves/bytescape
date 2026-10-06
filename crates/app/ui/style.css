@@ -243,8 +243,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   min-height: 120px;
   display: flex;
   flex-direction: column;
-  /* Columns drop by the pane's width, not the window's (see below). */
-  container-type: inline-size;
+  min-width: 0;
 }
 
 .splitter {
@@ -309,9 +308,10 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .tip .t-meta { display: flex; align-items: center; gap: 6px; color: var(--muted); margin-top: 2px; }
 .tip .t-path { color: var(--muted); word-break: break-all; margin-top: 2px; }
 
+/* --cols is set from the column widths (app.js, applyColumns). */
 .thead, .row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 84px 120px 84px 76px 92px 160px;
+  grid-template-columns: var(--cols, minmax(180px, 1fr) 84px 120px 84px 76px 92px 160px);
   align-items: center;
 }
 .filters {
@@ -553,8 +553,14 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   color: var(--muted);
   font-size: 12px;
   user-select: none;
+  overflow: hidden; /* scrolled sideways with the list */
+  flex: none;
 }
-.thead > div { padding: 7px 8px; cursor: pointer; white-space: nowrap; }
+.thead > div { position: relative; padding: 7px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Drag a header's right edge to resize the column; double-click resets it. */
+.grip { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; }
+.grip::after { content: ""; position: absolute; top: 25%; right: 0; height: 50%; border-right: 1px solid var(--line); }
+.grip:hover::after, .grip.drag::after { top: 0; height: 100%; border-right: 2px solid var(--accent); }
 .thead > div:hover { color: var(--text); }
 .thead > div.sorted { color: var(--text); font-weight: 600; }
 .thead > div.sorted::after { content: " ▾"; }
@@ -566,7 +572,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   position: relative;
   outline: none;
 }
-#rows { position: absolute; top: 0; left: 0; right: 0; }
+#rows { position: absolute; top: 0; left: 0; width: max(100%, var(--cols-min, 100%)); }
 
 .row {
   height: 26px;
@@ -595,6 +601,9 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .row.dup .num, .row.link .label, .row.online .label { color: var(--muted); }
 .row.error .label, .row.readerr .label { color: var(--warn); }
 .tag { margin-left: 6px; font-size: 11px; color: var(--muted); }
+.folder-cell { font-size: 12px; color: var(--muted); }
+.crumb { cursor: pointer; }
+.crumb:hover { color: var(--accent); text-decoration: underline; }
 
 .pct { display: flex; align-items: center; gap: 6px; }
 .pct .bar { flex: 1; height: 8px; border-radius: 2px; background: var(--hover); overflow: hidden; }
@@ -620,13 +629,3 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   .side { width: 240px; }
 }
 
-/* Narrow tree pane: drop Files and Modified, then Category too. */
-@container (max-width: 880px) {
-  .thead, .row { grid-template-columns: minmax(180px, 1fr) 80px 110px 80px 140px; }
-  .thead > :nth-child(5), .row > :nth-child(5),
-  .thead > :nth-child(6), .row > :nth-child(6) { display: none; }
-}
-@container (max-width: 640px) {
-  .thead, .row { grid-template-columns: minmax(140px, 1fr) 76px 96px 76px; }
-  .thead > :nth-child(n+5), .row > :nth-child(n+5) { display: none; }
-}
