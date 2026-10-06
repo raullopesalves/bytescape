@@ -160,7 +160,20 @@ window.__TAURI__ = {
       switch (cmd) {
         // index.html?start shows the start screen instead of scanning at once.
         case 'initial_path': return location.search.includes('start') ? null : 'X:\\demo';
-        case 'start_scan': setTimeout(() => handlers['scan-done']?.({ payload: null }), 50); return null;
+        // A short scan with progress; ?slowscan makes it last 4 s (for looking at the scanning screen).
+        case 'start_scan': {
+          const ms = location.search.includes('slowscan') ? 4000 : 300;
+          for (let t = 50; t < ms; t += 100) {
+            setTimeout(() => handlers['scan-progress']?.({ payload: { files: Math.round(t * 37.3), dirs: Math.round(t * 4.1), bytes: t * 7.3e6, elapsedMs: t } }), t);
+          }
+          setTimeout(() => handlers['scan-done']?.({ payload: null }), ms);
+          return null;
+        }
+        case 'places': return [
+          { name: 'Home', path: 'C:\\Users\\demo' }, { name: 'Desktop', path: 'C:\\Users\\demo\\Desktop' },
+          { name: 'Documents', path: 'C:\\Users\\demo\\Documents' }, { name: 'Downloads', path: 'C:\\Users\\demo\\Downloads' },
+          { name: 'Pictures', path: 'C:\\Users\\demo\\Pictures' }, { name: 'Videos', path: 'C:\\Users\\demo\\Videos' },
+        ];
         case 'summary': return {
           root: byId.get(0), files: 7, dirs: 4, links: 0, errors: 0,
           hardlinkDups: 0, scanMs: 12, categoriseMs: 1, categories,

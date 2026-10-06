@@ -82,14 +82,10 @@ async function startScan(path) {
   }
   lastPath = path;
   store.set('lastPath', path);
+  rememberRecent(path);
   $('elevate').hidden = true;
   summary = null;
-  $('main').hidden = true;
-  $('statusbar').hidden = true;
-  $('empty').hidden = false;
-  $('empty').querySelector('h1').textContent = 'Scanning…';
-  $('empty').querySelector('p').textContent = path;
-  setStartIdle(false);
+  showScanning(path);
   setScanning(true);
   setStatus(`Scanning ${path}…`);
 }
@@ -103,6 +99,10 @@ function setScanning(on) {
 listen('scan-progress', (e) => {
   const p = e.payload;
   setStatus(`Scanning… ${plural(p.files, 'file')} · ${plural(p.dirs, 'folder')} · ${human(p.bytes)} · ${(p.elapsedMs / 1000).toFixed(1)} s`);
+  $('ss-files').textContent = fmtInt(p.files);
+  $('ss-dirs').textContent = fmtInt(p.dirs);
+  $('ss-bytes').textContent = human(p.bytes);
+  $('ss-time').textContent = `${(p.elapsedMs / 1000).toFixed(1)} s`;
 });
 
 listen('scan-done', async () => {
@@ -114,9 +114,6 @@ listen('scan-error', (e) => {
   setScanning(false);
   const cancelled = e.payload === 'scan cancelled';
   setStatus(cancelled ? 'Scan cancelled.' : `Scan failed: ${e.payload}`, !cancelled);
-  $('empty').querySelector('h1').textContent = 'See what takes up space';
-  $('empty').querySelector('p').textContent = 'Pick a folder or a whole drive. Bytescape scans it and groups everything by category.';
-  setStartIdle(true);
   showStart();
 });
 
@@ -145,7 +142,8 @@ async function loadResult() {
   view = 'tree';
 
   renderSide();
-  $('empty').hidden = true;
+  $('scanning').hidden = true;
+  $('start').hidden = true;
   $('main').hidden = false;
   $('statusbar').hidden = false;
   $('scroller').scrollTop = 0;
@@ -1171,32 +1169,100 @@ const store = {
 };
 
 /** Start screen: drives to scan and the last folder. */
-async function showStart() {
-  const last = store.get('lastPath');
-  $('last-scan').hidden = !last;
-  if (last) {
-    $('last-scan').textContent = `Scan ${last} again`;
-    $('last-scan').dataset.path = last;
-  }
-  let drives = [];
+// ---------- logo, splash, start screen, scanning ----------
+
+// The app icon as SVG: a dark plate with five tiles, like a small treemap.
+const LOGO_SVG = `<svg class="logo" viewBox="0 0 100 100" role="img" aria-label="Bytescape">
+  <rect class="plate" x="0" y="0" width="100" height="100" rx="19.5" fill="#1e2028"/>
+  <rect class="tile t1" x="11.3" y="11.3" width="43.2" height="77.4" rx="3.5" fill="#7c5ce6"/>
+  <rect class="tile t2" x="58.5" y="11.3" width="30.2" height="40.8" rx="3.5" fill="#38aaa0"/>
+  <rect class="tile t3" x="58.5" y="56" width="14" height="32.7" rx="3.5" fill="#e8a03c"/>
+  <rect class="tile t4" x="76.3" y="56" width="12.4" height="14.8" rx="3.5" fill="#e25c78"/>
+  <rect class="tile t5" x="76.3" y="74.7" width="12.4" height="14" rx="3.5" fill="#6ebe5a"/>
+</svg>`;
+for (const slot of document.querySelectorAll('.logo-slot')) slot.innerHTML = LOGO_SVG;
+
+const DRIVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2.5"/><circle cx="16.5" cy="12" r="1.2" fill="currentColor"/><path d="M6.5 12h5"/></svg>';
+const FOLDER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>';
+
+/** Hides the splash after its animation (or at once on click). */
+function endSplash() {
+  const sp = $('splash');
+  if (!sp || sp.classList.contains('done')) return;
+  sp.classList.add('done');
+  setTimeout(() => { sp.hidden = true; }, 400);
+}
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+setTimeout(endSplash, reduceMotion ? 300 : 1700);
+$('splash').addEventListener('click', endSplash);
+
+/** Recently scanned folders, newest first: [{ path, at }]. */
+function recentList() {
   try {
-    drives = await invoke('drives');
+    const list = JSON.parse(store.get('recent') || '[]');
+    if (Array.isArray(list) && list.length) return list;
   } catch {
-    // no drive list; the folder picker still works
+    // ignore a damaged list
   }
-  $('drives').innerHTML = drives.map((d) => {
-    const pct = d.total ? ((d.total - d.free) * 100) / d.total : 0;
-    const name = d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
-    return `<button class="drive" data-path="${esc(d.path)}">
-        <span class="d-top"><span>${name}</span><span class="d-free">${human(d.free)} free of ${human(d.total)}</span></span>
-        <span class="cat-bar"><span style="width:${pct}%;background:var(--accent)"></span></span></button>`;
-  }).join('');
+  const last = store.get('lastPath');
+  return last ? [{ path: last, at: 0 }] : [];
 }
 
-function setStartIdle(idle) {
-  $('pick-empty').hidden = !idle;
-  $('drives').hidden = !idle;
-  $('last-scan').hidden = !idle || !store.get('lastPath');
+function rememberRecent(path) {
+  const key = path.toLowerCase();
+  const list = [{ path, at: Math.floor(Date.now() / 1000) }]
+    .concat(recentList().filter((r) => r.path.toLowerCase() !== key))
+    .slice(0, 6);
+  store.set('recent', JSON.stringify(list));
+}
+
+/** Shows the start screen: drives, standard folders, recent scans. */
+async function showStart() {
+  $('scanning').hidden = true;
+  $('main').hidden = true;
+  $('statusbar').hidden = true;
+  $('start').hidden = false;
+  $('start-back').hidden = !summary;
+  const [drives, places] = await Promise.all([
+    invoke('drives').catch(() => []),
+    invoke('places').catch(() => []),
+  ]);
+  $('drives').innerHTML = drives.map((d) => {
+    const used = d.total ? ((d.total - d.free) * 100) / d.total : 0;
+    const name = d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+    return `<button class="drive" data-path="${esc(d.path)}">
+        <span class="d-name">${DRIVE_ICON}${name}</span>
+        <span class="d-bar"><span class="${used > 90 ? 'full' : ''}" style="width:${used}%"></span></span>
+        <span class="d-free">${human(d.free)} free of ${human(d.total)}</span>
+      </button>`;
+  }).join('') || '<p class="note">No drives found. Browse for a folder instead.</p>';
+  $('places').innerHTML = places.map((p) => `<button class="place" data-path="${esc(p.path)}" title="${esc(p.path)}">${FOLDER_ICON}${esc(p.name)}</button>`).join('');
+  const recent = recentList();
+  $('recent-section').hidden = !recent.length;
+  $('recent').innerHTML = recent.map((r) => `<button data-path="${esc(r.path)}" title="Scan ${esc(r.path)} again">
+      <span class="r-path">${esc(r.path)}</span><span class="r-when">${r.at ? when(r.at) : ''}</span></button>`).join('');
+}
+
+function backToResults() {
+  if (!summary) return;
+  $('start').hidden = true;
+  $('main').hidden = false;
+  $('statusbar').hidden = false;
+  renderSoon();
+  layoutMap();
+}
+
+/** The scanning screen, reset for a new scan of `path`. */
+function showScanning(path) {
+  $('start').hidden = true;
+  $('main').hidden = true;
+  $('statusbar').hidden = true;
+  $('scanning').hidden = false;
+  $('scan-path').textContent = path;
+  $('ss-files').textContent = '0';
+  $('ss-dirs').textContent = '0';
+  $('ss-bytes').textContent = '0 B';
+  $('ss-time').textContent = 'Starting…';
 }
 
 // ---------- scan history ----------
@@ -1393,7 +1459,13 @@ listen('dupes-done', (e) => {
 
 // ---------- wiring ----------
 
-$('pick').addEventListener('click', pick);
+$('pick').addEventListener('click', showStart);
+$('start-back').addEventListener('click', backToResults);
+$('scan-cancel').addEventListener('click', () => invoke('cancel_scan'));
+$('start').addEventListener('click', (e) => {
+  const path = e.target.closest('[data-path]')?.dataset.path;
+  if (path) startScan(path);
+});
 $('pick-empty').addEventListener('click', pick);
 $('rescan').addEventListener('click', () => lastPath && startScan(lastPath));
 $('cancel').addEventListener('click', () => invoke('cancel_scan'));
@@ -1657,11 +1729,6 @@ $('dupes').addEventListener('change', (e) => {
   dupesKeep.set(r.dataset.key, Number(r.value));
   renderDupes();
 });
-$('drives').addEventListener('click', (e) => {
-  const path = e.target.closest('[data-path]')?.dataset.path;
-  if (path) startScan(path);
-});
-$('last-scan').addEventListener('click', (e) => startScan(e.currentTarget.dataset.path));
 
 const savedMap = Number(store.get('mapHeight'));
 if (savedMap >= 120) $('map-pane').style.height = `${Math.min(savedMap, window.innerHeight - 320)}px`;

@@ -670,6 +670,37 @@ fn drives() -> Vec<drives::Drive> {
     drives::list()
 }
 
+#[derive(Serialize)]
+struct Place {
+    name: &'static str,
+    path: String,
+}
+
+/// The user's standard folders that exist (they may have been moved, for
+/// example into OneDrive), for the start screen.
+#[tauri::command]
+fn places(app: AppHandle) -> Vec<Place> {
+    let p = app.path();
+    [
+        ("Home", p.home_dir()),
+        ("Desktop", p.desktop_dir()),
+        ("Documents", p.document_dir()),
+        ("Downloads", p.download_dir()),
+        ("Pictures", p.picture_dir()),
+        ("Videos", p.video_dir()),
+        ("Music", p.audio_dir()),
+    ]
+    .into_iter()
+    .filter_map(|(name, dir)| {
+        let dir = dir.ok().filter(|d| d.is_dir())?;
+        Some(Place {
+            name,
+            path: dir.display().to_string(),
+        })
+    })
+    .collect()
+}
+
 struct DeleteJob {
     id: NodeId,
     name: String,
@@ -1029,6 +1060,7 @@ fn main() {
             overview,
             export,
             drives,
+            places,
             relaunch_elevated,
             scan_history::history_list,
             scan_history::history_compare,

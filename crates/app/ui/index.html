@@ -9,20 +9,61 @@
 </head>
 <body>
   <header class="toolbar">
-    <button id="pick" class="primary">Scan folder…</button>
+    <button id="pick" class="primary">New scan</button>
     <button id="rescan" hidden>Rescan</button>
     <button id="cancel" hidden>Cancel</button>
     <button id="elevate" hidden title="Reads the drive's file table directly, which is several times faster. Windows asks for permission first.">Scan faster as administrator</button>
     <div id="status" class="status" aria-live="polite"></div>
   </header>
 
-  <div id="empty" class="empty">
-    <div class="empty-card">
-      <h1>See what takes up space</h1>
-      <p>Pick a folder or a whole drive. Bytescape scans it and groups everything by category.</p>
-      <button id="pick-empty" class="primary big">Scan folder…</button>
-      <button id="last-scan" class="link" hidden></button>
-      <div class="drives" id="drives" aria-label="Drives"></div>
+  <div id="splash" class="splash" aria-hidden="true">
+    <div class="splash-inner">
+      <div class="logo-slot"></div>
+      <div class="splash-name">Bytescape</div>
+    </div>
+  </div>
+
+  <div id="start" class="start" hidden>
+    <div class="start-inner">
+      <div class="start-head">
+        <div class="logo-slot small"></div>
+        <div>
+          <h1>What do you want to scan?</h1>
+          <p>Pick a drive or a folder. Bytescape maps what's in it and sorts everything into categories.</p>
+        </div>
+      </div>
+      <section>
+        <h2>Drives</h2>
+        <div class="drive-grid" id="drives"></div>
+      </section>
+      <section>
+        <h2>Folders</h2>
+        <div class="place-grid" id="places"></div>
+      </section>
+      <section id="recent-section" hidden>
+        <h2>Recent</h2>
+        <div class="recent" id="recent"></div>
+      </section>
+      <div class="start-actions">
+        <button id="pick-empty" class="primary big">Browse for a folder…</button>
+        <button id="start-back" class="big" hidden>Back to results</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="scanning" class="scanning" hidden>
+    <div class="scan-card">
+      <div class="logo-slot loader"></div>
+      <h1>Scanning</h1>
+      <p class="scan-path" id="scan-path"></p>
+      <div class="scan-stats">
+        <div><b id="ss-files">0</b><span>files</span></div>
+        <div><b id="ss-dirs">0</b><span>folders</span></div>
+        <div><b id="ss-bytes">0 B</b><span>found</span></div>
+      </div>
+      <div class="scan-bar" aria-hidden="true"><span></span></div>
+      <p class="note" id="ss-time">Starting…</p>
+      <button id="scan-cancel">Cancel</button>
     </div>
   </div>
 
