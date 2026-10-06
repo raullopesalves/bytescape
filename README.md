@@ -45,6 +45,13 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   with Ctrl+click, Shift+click, Shift+arrows or Ctrl+A, then press B or
   Delete, or right-click), review it with a warning for anything risky, then move it to the Recycle Bin (or delete it
   for good, if you ask twice).
+- **File types:** totals per extension, coloured by category; click one to
+  see those files.
+- **Windows cleanup:** empty the Recycle Bin, turn off hibernation, clean up
+  Windows components and remove a previous Windows installation, all done
+  by Windows itself.
+- **All drives at once**, network shares (`\\server\share`), and "Scan with
+  Bytescape" in Explorer's right-click menu (added by the installer).
 - **Export** a folder's contents or search results as CSV or JSON.
 
 ![Tree and treemap](docs/screenshots/tree-and-treemap.png)
