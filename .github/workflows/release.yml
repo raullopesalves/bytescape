@@ -1,0 +1,97 @@
+name: Release
+
+# Pushing a version tag (git tag v0.1.0 && git push origin v0.1.0) builds the
+# installer, the standalone app and the CLI on a clean Windows runner and
+# attaches them to a draft release. Nothing is public until the draft is
+# published on GitHub.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and draft a release
+    runs-on: windows-latest
+    env:
+      TAURI_CLI_VERSION: 2.12.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = (Get-Content crates/app/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $workspace = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne "v$version" -or $workspace -ne $version) {
+            throw "Tag $tag, tauri.conf.json $version and Cargo.toml $workspace must agree"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-
+
+      - name: Cache the Tauri CLI
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: ${{ runner.os }}-tauri-cli-${{ env.TAURI_CLI_VERSION }}
+
+      - name: Install the Tauri CLI
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build the installer and the app
+        working-directory: crates/app
+        run: cargo tauri build --ci -- --locked
+
+      - name: Build the CLI
+        run: cargo build --release --locked -p bytescape-cli
+
+      - name: Collect the files
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item "target/release/bundle/nsis/Bytescape_${env:VERSION}_x64-setup.exe" dist/
+          Copy-Item target/release/bytescape.exe "dist/Bytescape_${env:VERSION}_x64_portable.exe"
+          Copy-Item target/release/bytescape-cli.exe "dist/bytescape-cli_${env:VERSION}_x64.exe"
+          Get-ChildItem dist -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          **Download** ``Bytescape_${env:VERSION}_x64-setup.exe`` and run it. It installs
+          for your user only (no administrator rights) and downloads WebView2 if
+          Windows doesn't have it. The files aren't code-signed yet, so Windows
+          SmartScreen may say "Windows protected your PC": choose **More info**,
+          then **Run anyway**.
+
+          - ``Bytescape_${env:VERSION}_x64_portable.exe``: the app without installing (needs WebView2, which Windows 10 and 11 normally have).
+          - ``bytescape-cli_${env:VERSION}_x64.exe``: the command-line tool.
+          - ``SHA256SUMS.txt``: checksums of the files above.
+          "@
+          gh release create "${{ github.ref_name }}" (Get-ChildItem dist -File).FullName `
+            --draft --title "Bytescape ${env:VERSION}" --notes $notes --generate-notes

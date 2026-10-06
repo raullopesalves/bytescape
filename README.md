@@ -6,6 +6,18 @@ dependencies, ...), and helps you clean up safely.
 
 ![Overview after scanning C:\Windows](docs/screenshots/overview.png)
 
+## Download
+
+Get `Bytescape_<version>_x64-setup.exe` from the
+[latest release](https://github.com/raullopesalves/bytescape/releases/latest)
+and run it. It installs for your user only, without administrator rights, and
+downloads WebView2 if Windows doesn't have it. The files aren't code-signed
+yet, so SmartScreen may say "Windows protected your PC": choose **More info**,
+then **Run anyway**.
+
+Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
+(no install), the command-line tool, and SHA-256 checksums.
+
 ## What it does
 
 - **Fast scans.** Folders are listed in parallel, about 2 seconds for
@@ -111,6 +123,22 @@ cargo tauri build
 The installer is written to `target/release/bundle/nsis/`. It installs for the
 current user, without administrator rights, and downloads WebView2 if it is
 missing. It is not code-signed yet, so Windows SmartScreen warns about it.
+
+### Making a release
+
+Set the new version in `Cargo.toml` (`workspace.package`) and
+`crates/app/tauri.conf.json`, run `cargo check` to update `Cargo.lock`, commit,
+then push a tag:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The Release workflow (`.github/workflows/release.yml`) checks the tag matches
+both versions, runs the tests, builds the installer, the standalone app and
+the CLI on a clean Windows runner, and attaches them with checksums to a
+**draft** release. Review the draft on GitHub, then publish it.
 
 ## Project layout
 
