@@ -111,6 +111,10 @@ async function pick() {
   if (path) startScan(path);
 }
 
+/** What start_scan takes for "All drives" (see ALL_DRIVES in main.rs). */
+const ALL_DRIVES = '::all-drives';
+const pathLabel = (p) => (p === ALL_DRIVES ? 'All drives' : p);
+
 async function startScan(path) {
   try {
     await invoke('start_scan', { path });
@@ -125,7 +129,7 @@ async function startScan(path) {
   summary = null;
   showScanning(path);
   setScanning(true);
-  setStatus(`Scanning ${path}…`);
+  setStatus(`Scanning ${pathLabel(path)}…`);
 }
 
 function setScanning(on) {
@@ -174,6 +178,8 @@ async function loadResult() {
   $('dupes').innerHTML = '';
   basket = EMPTY_BASKET;
   basketIds = new Set();
+  fileTypes = null;
+  typesShown = 200;
   renderBasket();
   resetFilters();
   $('f-cat').innerHTML = '<option value="">All categories</option>' + [...summary.categories]
@@ -655,46 +661,102 @@ function isCollapsed(i) {
   return i + 1 >= map.n || map.depth[i + 1] <= map.depth[i];
 }
 
-function drawMap() {
-  const ctx = $('map').getContext('2d', { alpha: false });
-  const frames = [cssVar('--map-frame-a'), cssVar('--map-frame-b')];
-  const rest = cssVar('--map-rest');
-  const dim = cssVar('--map-dim');
-  const other = cssVar('--map-other');
-  ctx.fillStyle = cssVar('--map-bg');
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+/** A CSS colour as [r, g, b, a] (0-255, alpha 0-1), resolved by a canvas. */
+const rgbaCache = new Map();
+function rgba(color) {
+  let c = rgbaCache.get(color);
+  if (!c) {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    c = [r, g, b, a / 255];
+    rgbaCache.set(color, c);
+  }
+  return c;
+}
 
+// Cushion shading, after van Wijk and van de Wetering, "Cushion Treemaps"
+// (1999): each level of folders adds a parabolic ridge across its block, so
+// a block's surface is the sum of its ancestors' ridges and its own, and the
+// light (from the top left) shows the nesting as bumps on bumps.
+const CUSHION = { height: 0.18, falloff: 0.75, ambient: 0.3, diffuse: 0.75 };
+const LIGHT = (() => {
+  const l = [-1, -1, 3];
+  const n = Math.hypot(...l);
+  return l.map((v) => v / n);
+})();
+
+function drawMap() {
+  const canvas = $('map');
+  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  const W = canvas.width, H = canvas.height;
+  const frames = [cssVar('--map-frame-a'), cssVar('--map-frame-b')];
+  ctx.fillStyle = cssVar('--map-bg');
+  ctx.fillRect(0, 0, W, H);
+  // Open folders are frames behind their contents.
+  for (let i = 0; i < map.n; i++) {
+    if (map.kind[i] === K_DIR && !isCollapsed(i)) {
+      ctx.fillStyle = frames[map.depth[i] % 2];
+      ctx.fillRect(map.x[i], map.y[i], map.w[i], map.h[i]);
+    }
+  }
+  if (!map.n || !W || !H) return;
+
+  const img = ctx.getImageData(0, 0, W, H);
+  const px = img.data;
+  const rest = rgba(cssVar('--map-rest'));
+  const dim = rgba(cssVar('--map-dim'));
+  const other = rgba(cssVar('--map-other'));
+  const colours = new Map(); // category id -> [r, g, b, a]
+  // Surface coefficients per depth on the path to the current block:
+  // z(x) = s2x·x² + s1x·x, and the same for y.
+  const surf = new Float64Array(257 * 4);
+  const [lx, ly, lz] = LIGHT;
   for (let i = 0; i < map.n; i++) {
     const x = map.x[i], y = map.y[i], w = map.w[i], h = map.h[i];
+    const d = map.depth[i];
+    const at = (d + 1) * 4, up = d * 4; // slot d + 1; the parent's is slot d
+    let s1x = d ? surf[up] : 0, s2x = d ? surf[up + 1] : 0;
+    let s1y = d ? surf[up + 2] : 0, s2y = d ? surf[up + 3] : 0;
+    const ridge = CUSHION.height * CUSHION.falloff ** d;
+    if (w > 0) { s1x += (4 * ridge * (2 * x + w)) / w; s2x -= (4 * ridge) / w; }
+    if (h > 0) { s1y += (4 * ridge * (2 * y + h)) / h; s2y -= (4 * ridge) / h; }
+    surf[at] = s1x; surf[at + 1] = s2x; surf[at + 2] = s1y; surf[at + 3] = s2y;
+
     const kind = map.kind[i];
-    if (kind === K_DIR && !isCollapsed(i)) {
-      ctx.fillStyle = frames[map.depth[i] % 2];
-      ctx.fillRect(x, y, w, h);
-      continue;
-    }
+    if (kind === K_DIR && !isCollapsed(i)) continue;
     // Leaves: files, folders too small to open, and "smaller items" blocks.
     // Leave a 1 px seam on the right and bottom so neighbours stay apart.
     const gw = w >= 3 ? w - 1 : w, gh = h >= 3 ? h - 1 : h;
-    const cat = kind <= K_REST ? cats.get(map.cat[i]) : undefined;
-    ctx.fillStyle = cat ? colorOf(cat) : other;
-    ctx.fillRect(x, y, gw, gh);
-    if (kind === K_REST) {
-      ctx.fillStyle = rest;
-      ctx.fillRect(x, y, gw, gh);
-    } else if (w > 8 && h > 8) {
-      // Soft light from the top left gives each block some depth.
-      const g = ctx.createLinearGradient(x, y, x + gw, y + gh);
-      g.addColorStop(0, 'rgba(255,255,255,0.22)');
-      g.addColorStop(0.5, 'rgba(255,255,255,0)');
-      g.addColorStop(1, 'rgba(0,0,0,0.22)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x, y, gw, gh);
+    let base = other;
+    if (kind <= K_REST && cats.has(map.cat[i])) {
+      base = colours.get(map.cat[i]);
+      if (!base) colours.set(map.cat[i], (base = rgba(colorOf(cats.get(map.cat[i])))));
     }
-    if (map.dim[i]) {
-      ctx.fillStyle = dim;
-      ctx.fillRect(x, y, gw, gh);
+    // A veil over the block: "smaller items", or no match while filtering.
+    const veil = map.dim[i] ? dim : kind === K_REST ? rest : null;
+    const va = veil ? veil[3] : 0;
+    const x0 = Math.max(0, Math.round(x)), x1 = Math.min(W, Math.round(x + gw));
+    const y0 = Math.max(0, Math.round(y)), y1 = Math.min(H, Math.round(y + gh));
+    for (let py = y0; py < y1; py++) {
+      const ny = -(2 * s2y * (py + 0.5) + s1y);
+      let o = (py * W + x0) * 4;
+      for (let qx = x0; qx < x1; qx++, o += 4) {
+        const nx = -(2 * s2x * (qx + 0.5) + s1x);
+        const cos = (nx * lx + ny * ly + lz) / Math.sqrt(nx * nx + ny * ny + 1);
+        const k = CUSHION.ambient + CUSHION.diffuse * Math.max(0, cos);
+        let r = base[0] * k, g = base[1] * k, b = base[2] * k;
+        if (va) {
+          r = r * (1 - va) + veil[0] * va;
+          g = g * (1 - va) + veil[1] * va;
+          b = b * (1 - va) + veil[2] * va;
+        }
+        px[o] = r; px[o + 1] = g; px[o + 2] = b; // clamped by the array
+      }
     }
   }
+  ctx.putImageData(img, 0, 0);
 }
 
 /** Rectangle of the tree's selected node, or of its nearest drawn ancestor. */
@@ -908,10 +970,11 @@ function setView(v) {
   if (prev === 'tree' && v !== 'tree') treeScroll = $('scroller').scrollTop;
   view = v;
   // Overview, History and Duplicates are panels; Tree and Results are the list.
-  const panel = v === 'overview' || v === 'history' || v === 'dupes';
+  const panel = v === 'overview' || v === 'history' || v === 'dupes' || v === 'types';
   $('overview').hidden = v !== 'overview';
   $('history').hidden = v !== 'history';
   $('dupes').hidden = v !== 'dupes';
+  $('types').hidden = v !== 'types';
   $('thead').hidden = panel;
   $('scroller').hidden = panel;
   if (prev !== v && !panel) $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
@@ -928,6 +991,7 @@ function setView(v) {
   if (v === 'overview') renderOverview();
   else if (v === 'history') renderHistory();
   else if (v === 'dupes') renderDupes();
+  else if (v === 'types') renderTypes();
   else render();
   drawOverlay();
 }
@@ -1445,6 +1509,7 @@ async function refreshAfterDelete() {
   useTree('tree');
   summary = await invoke('summary');
   cats = new Map(summary.categories.map((c) => [c.id, c]));
+  fileTypes = null;
   renderSide();
   const kept = expanded;
   cache = new Map();
@@ -1465,6 +1530,7 @@ async function refreshAfterDelete() {
   if (search) await applyFilters();
   else await layoutMap();
   if (view === 'dupes') renderDupes();
+  if (view === 'types') renderTypes();
   if (view === 'tree' || shownTree === 'groups') select(selected);
 }
 
@@ -1507,7 +1573,111 @@ async function renderOverview() {
       <section class="ov-card"><h3>Usually safe to clean</h3>${safe}</section>
       <section class="ov-card wide"><h3>Largest files</h3>
         <ul class="ov-list">${o.largestFiles.map(item).join('') || '<li>No files.</li>'}</ul></section>
+      <section class="ov-card wide" id="ov-clean"><h3>Windows cleanup</h3><p class="note">Checking…</p></section>
     </div>`;
+  renderCleanup();
+}
+
+// ---------- file types ----------
+
+let fileTypes = null; // totals per extension, loaded when the view first opens
+let typesShown = 200;
+
+async function renderTypes() {
+  const el = $('types');
+  if (!fileTypes) {
+    el.innerHTML = '<p class="note">Adding up…</p>';
+    try {
+      fileTypes = await invoke('file_types');
+    } catch (e) {
+      el.textContent = String(e);
+      return;
+    }
+  }
+  if (view !== 'types') return;
+  const total = fileTypes.reduce((t, x) => t + x.size, 0) || 1;
+  const row = (t) => {
+    const cat = cats.get(t.category);
+    const color = colorOf(cat);
+    const pct = (t.size * 100) / total;
+    const name = t.ext ? `.${esc(t.ext)}` : '<i>no extension</i>';
+    return `<li${t.ext ? ` data-ext="${esc(t.ext)}" title="Show only .${esc(t.ext)} files"` : ''}>
+      <span class="swatch" style="background:${color}"></span><span class="t-ext">${name}</span>
+      <span class="t-cat">${cat ? esc(cat.name) : ''}</span><span class="t-files">${plural(t.files, 'file')}</span>
+      <span class="t-size">${human(t.size)}</span>
+      <div class="cat-bar"><span style="width:${pct}%;background:${color}"></span></div></li>`;
+  };
+  const more = fileTypes.length - typesShown;
+  el.innerHTML = `<section class="ov-card wide"><h3>File types</h3>
+    <p class="note">${plural(fileTypes.length, 'kind')} of file, largest first, coloured by the category most of their bytes are in. Click one to see only those files.</p>
+    <ul class="ov-list types-list">${fileTypes.slice(0, typesShown).map(row).join('')}</ul>
+    ${more > 0 ? `<button id="types-more">Show ${fmtInt(Math.min(1000, more))} more</button>` : ''}</section>`;
+}
+
+// ---------- Windows cleanup ----------
+
+/** The Windows cleanup card in the overview. */
+async function renderCleanup() {
+  let s;
+  try {
+    s = await invoke('cleanup_status');
+  } catch (e) {
+    s = null;
+  }
+  const el = $('ov-clean');
+  if (!el || !s) return;
+  const items = [
+    ['recycle', 'Recycle Bin', s.recycleBytes ? `${human(s.recycleBytes)} in ${plural(s.recycleItems, 'item')}` : 'Empty',
+      'Empty the Recycle Bin', !s.recycleBytes,
+      'Deleted files wait here until it is emptied. Windows asks before emptying it.'],
+    ['hibernation', 'Hibernation file', s.hiberfil ? `${human(s.hiberfil)} (hiberfil.sys)` : 'Hibernation is off',
+      'Turn off hibernation', !s.hiberfil,
+      'Windows keeps a file about as big as part of your memory for hibernating. Turning hibernation off removes it and also turns off Fast startup. Needs administrator rights; “powercfg /hibernate on” turns it back on.'],
+    ['components', 'Windows components (WinSxS)', s.winsxsSize ? human(s.winsxsSize) : `Scan ${s.systemDrive}\\ to see its size`,
+      'Clean up components', false,
+      'Removes old versions of Windows components that updates replaced, with Windows’ own DISM tool. Takes a few minutes in a window of its own. Needs administrator rights.'],
+  ];
+  if (s.windowsOld) {
+    items.push(['windows-old', 'Previous Windows installation', s.windowsOldSize ? human(s.windowsOldSize) : 'Windows.old',
+      'Open storage settings', false,
+      'Kept after a Windows upgrade so you can go back. Remove it in Windows’ storage settings, under Temporary files: “Previous Windows installation(s)”.']);
+  }
+  el.innerHTML = `<h3>Windows cleanup</h3>
+    <p class="note">Often the biggest wins. Windows does these itself, so nothing breaks; never delete these files by hand.</p>
+    <ul class="clean-list">${items.map(([k, name, size, label, off, why]) => `<li>
+      <div class="c-head"><span class="o-name">${name}</span><span class="o-size">${size}</span>
+        <button data-clean="${k}"${off ? ' disabled' : ''}>${label}</button></div>
+      <div class="note">${why}</div></li>`).join('')}</ul>`;
+}
+
+const CLEANUP_ASK = {
+  hibernation: ['Turn off hibernation?', 'Windows deletes hiberfil.sys and Fast startup stops working. Windows asks for administrator rights next.', 'Turn off'],
+  components: ['Clean up Windows components?', 'Windows’ DISM tool runs in a window of its own for a few minutes. Windows asks for administrator rights next.', 'Start'],
+};
+
+async function startCleanup(what) {
+  const go = async () => {
+    closeModal();
+    let done;
+    try {
+      done = await invoke('run_cleanup', { what });
+    } catch (e) {
+      setStatus(String(e), true);
+      return;
+    }
+    const said = {
+      recycle: done ? 'Recycle Bin emptied. Rescan to see the space come back in the map.' : 'The Recycle Bin was not emptied.',
+      hibernation: 'Turning hibernation off; hiberfil.sys goes away in a moment.',
+      components: 'Windows’ component cleanup is running in its own window. Rescan when it has finished.',
+      'windows-old': 'Opened Windows’ storage settings.',
+    };
+    setStatus(said[what] ?? '');
+    renderCleanup();
+    if (what === 'hibernation') setTimeout(renderCleanup, 3000);
+  };
+  const ask = CLEANUP_ASK[what];
+  if (!ask) return go();
+  modal(ask[0], `<p>${ask[1]}</p>`, [['Cancel', '', closeModal], [ask[2], 'primary', go]]);
 }
 
 /** What Export saves: the search results, or the selected folder (a file's folder). */
@@ -1598,20 +1768,30 @@ async function showStart() {
     invoke('drives').catch(() => []),
     invoke('places').catch(() => []),
   ]);
+  const local = drives.filter((d) => d.kind !== 'network');
+  if (local.length > 1) {
+    // Every local drive at once, under one root.
+    const total = local.reduce((t, d) => t + d.total, 0);
+    const free = local.reduce((t, d) => t + d.free, 0);
+    drives.push({ path: ALL_DRIVES, label: 'All drives', total, free, kind: 'all' });
+  }
   $('drives').innerHTML = drives.map((d) => {
     const used = d.total ? ((d.total - d.free) * 100) / d.total : 0;
-    const name = d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+    const name = d.kind === 'all' ? 'All drives'
+      : d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+    const kind = { network: 'Network', removable: 'Removable', all: `${local.length} drives` }[d.kind] ?? '';
     return `<button class="drive" data-path="${esc(d.path)}">
-        <span class="d-name">${DRIVE_ICON}${name}</span>
+        <span class="d-name">${DRIVE_ICON}${name}${kind ? `<span class="d-kind">${kind}</span>` : ''}</span>
         <span class="d-bar"><span class="${used > 90 ? 'full' : ''}" style="width:${used}%"></span></span>
         <span class="d-free">${human(d.free)} free of ${human(d.total)}</span>
       </button>`;
   }).join('') || '<p class="note">No drives found. Browse for a folder instead.</p>';
   $('places').innerHTML = places.map((p) => `<button class="place" data-path="${esc(p.path)}" title="${esc(p.path)}">${FOLDER_ICON}${esc(p.name)}</button>`).join('');
+  invoke('shell_menu_state').then((on) => { $('shell-menu').checked = on; }).catch(() => {});
   const recent = recentList();
   $('recent-section').hidden = !recent.length;
-  $('recent').innerHTML = recent.map((r) => `<button data-path="${esc(r.path)}" title="Scan ${esc(r.path)} again">
-      <span class="r-path">${esc(r.path)}</span><span class="r-when">${r.at ? when(r.at) : ''}</span></button>`).join('');
+  $('recent').innerHTML = recent.map((r) => `<button data-path="${esc(r.path)}" title="Scan ${esc(pathLabel(r.path))} again">
+      <span class="r-path">${esc(pathLabel(r.path))}</span><span class="r-when">${r.at ? when(r.at) : ''}</span></button>`).join('');
 }
 
 function backToResults() {
@@ -1629,7 +1809,7 @@ function showScanning(path) {
   $('main').hidden = true;
   $('statusbar').hidden = true;
   $('scanning').hidden = false;
-  $('scan-path').textContent = path;
+  $('scan-path').textContent = pathLabel(path);
   $('ss-files').textContent = '0';
   $('ss-dirs').textContent = '0';
   $('ss-bytes').textContent = '0 B';
@@ -1838,6 +2018,18 @@ $('start').addEventListener('click', (e) => {
   if (path) startScan(path);
 });
 $('pick-empty').addEventListener('click', pick);
+$('path-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const path = $('path-in').value.trim().replace(/^"(.*)"$/, '$1');
+  if (path) startScan(path);
+});
+$('shell-menu').addEventListener('change', async () => {
+  try {
+    $('shell-menu').checked = await invoke('set_shell_menu', { on: $('shell-menu').checked });
+  } catch (e) {
+    setStatus(String(e), true);
+  }
+});
 $('rescan').addEventListener('click', () => lastPath && startScan(lastPath));
 $('cancel').addEventListener('click', () => invoke('cancel_scan'));
 $('elevate').addEventListener('click', () => {
@@ -2081,7 +2273,21 @@ $('splitter').addEventListener('pointerdown', (e) => {
   split.addEventListener('pointerup', up);
 });
 
+$('types').addEventListener('click', (e) => {
+  if (e.target.closest('#types-more')) {
+    typesShown += 1000;
+    renderTypes();
+    return;
+  }
+  const ext = e.target.closest('[data-ext]')?.dataset.ext;
+  if (ext === undefined) return;
+  resetFilters();
+  $('f-ext').value = ext;
+  applyFilters();
+});
 $('overview').addEventListener('click', async (e) => {
+  const clean = e.target.closest('[data-clean]')?.dataset.clean;
+  if (clean) return startCleanup(clean);
   if (e.target.closest('#ov-add-safe')) {
     setBasket(await invoke('basket_add_suggested'));
     setStatus(`The cleanup basket now has ${plural(basket.items.length, 'item')}. Review it before deleting anything.`);

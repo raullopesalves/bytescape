@@ -135,6 +135,49 @@ fn folder_totals_equal_sum_of_children() {
 }
 
 #[test]
+fn combined_scans_keep_paths_and_totals() {
+    let (one, two) = (fixture(), fixture());
+    fs::remove_file(two.path().join("top.txt")).unwrap();
+    let opts = ScanOptions::default();
+    let (a, b) = (
+        scan(one.path(), &opts).unwrap(),
+        scan(two.path(), &opts).unwrap(),
+    );
+    let (a_len, b_len) = (a.len(), b.len());
+    let (a_size, b_size) = (a.node(0).size, b.node(0).size);
+    let tree = ScanTree::combine("All drives", vec![a, b]);
+
+    assert_eq!(tree.len(), 1 + a_len + b_len);
+    assert_eq!(&*tree.node(0).name, "All drives");
+    assert_eq!(tree.child_ids(0), 1..3);
+    assert_eq!(tree.node(0).size, a_size + b_size);
+    assert_eq!(tree.stats().files, 9); // 5 files in one, 4 in two
+    assert_eq!(tree.path(1), one.path());
+    assert_eq!(tree.path(2), two.path());
+    for id in 1..tree.len() as u32 {
+        assert!(
+            tree.node(id).parent < id,
+            "children come after their parent"
+        );
+        for c in tree.child_ids(id) {
+            assert_eq!(tree.node(c).parent, id);
+        }
+    }
+    // Every node's path is a real path again.
+    let mut seen = 0;
+    for id in 3..tree.len() as u32 {
+        let p = tree.path(id);
+        assert!(
+            p.starts_with(one.path()) || p.starts_with(two.path()),
+            "{p:?}"
+        );
+        assert!(fs::symlink_metadata(&p).is_ok(), "{p:?} exists");
+        seen += 1;
+    }
+    assert_eq!(seen, a_len + b_len - 2);
+}
+
+#[test]
 fn paths_round_trip() {
     let dir = fixture();
     let tree = scan(dir.path(), &ScanOptions::default()).unwrap();

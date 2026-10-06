@@ -41,7 +41,8 @@
     "longDescription": "A disk usage analyzer for Windows: fast scans, a category-coloured treemap, search, scan history, a duplicate finder and a safe cleanup basket.",
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
       }
     }
   }

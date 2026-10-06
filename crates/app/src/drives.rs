@@ -10,6 +10,8 @@ pub struct Drive {
     pub label: String,
     pub total: u64,
     pub free: u64,
+    /// "fixed", "removable" or "network".
+    pub kind: &'static str,
 }
 
 /// Fixed, removable and network drives that are ready (have media).
@@ -71,6 +73,11 @@ pub fn list() -> Vec<Drive> {
             label,
             total,
             free,
+            kind: match kind {
+                DRIVE_REMOVABLE => "removable",
+                DRIVE_REMOTE => "network",
+                _ => "fixed",
+            },
         });
     }
     out

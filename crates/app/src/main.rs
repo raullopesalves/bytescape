@@ -14,11 +14,14 @@ mod elevation;
 mod export;
 mod scan_history;
 mod search;
+mod shell_menu;
 mod treemap;
+mod wincleanup;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -200,10 +203,25 @@ struct Summary {
     drive_free: Option<u64>,
 }
 
+/// What to scan for "All drives": every fixed and removable drive, under
+/// one root.
+const ALL_DRIVES: &str = "::all-drives";
+
 /// The folder given on the command line (`bytescape <path>`), if any.
 #[tauri::command]
 fn initial_path() -> Option<String> {
-    std::env::args().nth(1)
+    std::env::args().nth(1).map(|a| clean_arg(&a))
+}
+
+/// Explorer passes a drive as "C:\", whose backslash escapes the closing
+/// quote, so it arrives as `C:"`.
+fn clean_arg(arg: &str) -> String {
+    let a = arg.trim_end_matches('"');
+    if a.len() == 2 && a.ends_with(':') {
+        format!("{a}\\")
+    } else {
+        a.to_string()
+    }
 }
 
 #[tauri::command]
@@ -239,7 +257,15 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
     let s = guard.as_ref().ok_or("No scan yet.")?;
     let tree = &s.tree;
     let st = tree.stats();
-    let space = drives::space(&tree.path(tree.root()));
+    let root_path = tree.path(tree.root());
+    let space = if root_path.is_absolute() {
+        drives::space(&root_path)
+    } else {
+        // All drives: add up the drives scanned.
+        tree.child_ids(tree.root())
+            .filter_map(|c| drives::space(&tree.path(c)))
+            .reduce(|a, b| (a.0 + b.0, a.1 + b.1))
+    };
     let categories = s
         .rules
         .totals(tree)
@@ -802,6 +828,156 @@ fn drives() -> Vec<drives::Drive> {
     drives::list()
 }
 
+/// Files of one extension.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileType {
+    /// Lower case, without the dot; empty for files without one.
+    ext: String,
+    files: u64,
+    size: u64,
+    alloc: u64,
+    /// The category holding most of its bytes.
+    category: u16,
+}
+
+/// Totals per file extension, largest first.
+#[tauri::command]
+fn file_types(state: State<AppState>) -> Result<Vec<FileType>, String> {
+    let guard = state.session.lock().unwrap();
+    let tree = &guard.as_ref().ok_or("No scan yet.")?.tree;
+    Ok(file_type_totals(tree))
+}
+
+fn file_type_totals(tree: &ScanTree) -> Vec<FileType> {
+    // Per extension: totals and bytes per category.
+    let mut by: HashMap<String, (FileType, HashMap<u16, u64>)> = HashMap::new();
+    let mut lower = String::new();
+    for n in tree.nodes() {
+        if n.kind != NodeKind::File || n.flags & (flags::HARDLINK_DUP | flags::REMOVED) != 0 {
+            continue;
+        }
+        // "archive.tar.gz" counts as gz; ".gitignore" has no extension.
+        let ext = match n.name.rfind('.') {
+            Some(i) if i > 0 && i + 1 < n.name.len() => &n.name[i + 1..],
+            _ => "",
+        };
+        lower.clear();
+        lower.extend(ext.chars().flat_map(char::to_lowercase));
+        let (t, cats) = by.entry(lower.clone()).or_insert_with(|| {
+            (
+                FileType {
+                    ext: lower.clone(),
+                    files: 0,
+                    size: 0,
+                    alloc: 0,
+                    category: 0,
+                },
+                HashMap::new(),
+            )
+        });
+        t.files += 1;
+        t.size += n.size;
+        t.alloc += n.alloc;
+        *cats.entry(n.category).or_default() += n.size;
+    }
+    let mut out: Vec<FileType> = by
+        .into_values()
+        .map(|(mut t, cats)| {
+            t.category = cats
+                .into_iter()
+                .max_by_key(|&(c, b)| (b, std::cmp::Reverse(c)))
+                .map_or(0, |(c, _)| c);
+            t
+        })
+        .collect();
+    out.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.ext.cmp(&b.ext)));
+    out
+}
+
+// ----- Windows' own cleanups -----
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupStatus {
+    #[serde(flatten)]
+    windows: wincleanup::Status,
+    /// Sizes from the scan, when it covers these folders.
+    windows_old_size: Option<u64>,
+    winsxs_size: Option<u64>,
+    elevated: bool,
+}
+
+#[tauri::command]
+fn cleanup_status(state: State<AppState>) -> CleanupStatus {
+    let windows = wincleanup::status();
+    let guard = state.session.lock().unwrap();
+    let size_of = |rel: &str| {
+        let s = guard.as_ref()?;
+        let p = PathBuf::from(format!(r"{}\{rel}", windows.system_drive));
+        find_node(&s.tree, &p).map(|id| s.tree.node(id).size)
+    };
+    CleanupStatus {
+        windows_old_size: size_of("Windows.old"),
+        winsxs_size: size_of(r"Windows\WinSxS"),
+        windows,
+        elevated: elevation::is_elevated(),
+    }
+}
+
+/// Runs one of Windows' cleanups; Windows asks the user first.
+#[tauri::command]
+fn run_cleanup(app: AppHandle, what: String) -> Result<bool, String> {
+    let owner = owner_window(&app);
+    match what.as_str() {
+        "recycle" => Ok(wincleanup::empty_recycle_bin(owner)),
+        "hibernation" => wincleanup::hibernation_off(owner).map(|()| true),
+        "components" => wincleanup::component_cleanup(owner).map(|()| true),
+        "windows-old" => wincleanup::open_storage_settings(owner).map(|()| true),
+        _ => Err(format!("Unknown cleanup {what}.")),
+    }
+}
+
+/// The node at `path`, if the scan covers it (names compared ignoring case).
+fn find_node(tree: &ScanTree, path: &Path) -> Option<NodeId> {
+    let root = tree.root();
+    let roots: Vec<NodeId> = if tree.path(root).is_absolute() {
+        vec![root]
+    } else {
+        tree.child_ids(root).collect()
+    };
+    let want = path.to_string_lossy().to_lowercase();
+    for r in roots {
+        let rp = tree.path(r).to_string_lossy().to_lowercase();
+        let Some(rest) = want.strip_prefix(rp.trim_end_matches('\\')) else {
+            continue;
+        };
+        if !(rest.is_empty() || rest.starts_with('\\')) {
+            continue;
+        }
+        let mut id = r;
+        for part in rest.split('\\').filter(|p| !p.is_empty()) {
+            id = tree.child_ids(id).find(|&c| {
+                let n = tree.node(c);
+                !n.has_flag(flags::REMOVED) && n.name.to_lowercase() == part
+            })?;
+        }
+        return Some(id);
+    }
+    None
+}
+
+#[tauri::command]
+fn shell_menu_state() -> bool {
+    shell_menu::is_on()
+}
+
+#[tauri::command]
+fn set_shell_menu(on: bool) -> Result<bool, String> {
+    shell_menu::set(on)?;
+    Ok(shell_menu::is_on())
+}
+
 #[derive(Serialize)]
 struct Place {
     name: &'static str,
@@ -1046,7 +1222,11 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
         })
     };
 
-    let result = scanner::scan(&path, &opts);
+    let result = if path.as_os_str() == ALL_DRIVES {
+        scan_all_drives(&opts)
+    } else {
+        scanner::scan(&path, &opts)
+    };
     done.store(true, Ordering::Relaxed);
     let _ = ticker.join();
 
@@ -1088,6 +1268,25 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
             let _ = app.emit("scan-error", e);
         }
     }
+}
+
+/// Every fixed and removable drive, one after the other, under one root.
+/// Drives that can't be read (no media) are left out.
+fn scan_all_drives(opts: &ScanOptions) -> Result<ScanTree, scanner::ScanError> {
+    let mut trees = Vec::new();
+    for d in drives::list().into_iter().filter(|d| d.kind != "network") {
+        match scanner::scan(Path::new(&d.path), opts) {
+            Ok(t) => trees.push(t),
+            Err(scanner::ScanError::Cancelled) => return Err(scanner::ScanError::Cancelled),
+            Err(_) => {}
+        }
+    }
+    if trees.is_empty() {
+        return Err(scanner::ScanError::Root(std::io::Error::other(
+            "no drive could be read",
+        )));
+    }
+    Ok(ScanTree::combine("All drives", trees))
 }
 
 /// The built-in rules plus the user's rules file, if there is one. A broken
@@ -1185,6 +1384,11 @@ fn main() {
             search_ids,
             search_children,
             search_matches_in,
+            file_types,
+            cleanup_status,
+            run_cleanup,
+            shell_menu_state,
+            set_shell_menu,
             clear_search,
             basket_view,
             basket_add,
@@ -1210,6 +1414,42 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explorer_drive_arguments() {
+        assert_eq!(super::clean_arg(r#"C:""#), r"C:\");
+        assert_eq!(super::clean_arg(r"D:\Games"), r"D:\Games");
+        assert_eq!(super::clean_arg(r"\\server\share"), r"\\server\share");
+    }
+
+    #[test]
+    fn file_types_and_finding_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        std::fs::create_dir_all(r.join("Sub")).unwrap();
+        std::fs::write(r.join("a.MP4"), vec![0u8; 3000]).unwrap();
+        std::fs::write(r.join("Sub/b.mp4"), vec![0u8; 2000]).unwrap();
+        std::fs::write(r.join("c.tar.gz"), vec![0u8; 500]).unwrap();
+        std::fs::write(r.join(".gitignore"), vec![0u8; 10]).unwrap();
+        std::fs::write(r.join("README"), vec![0u8; 20]).unwrap();
+        let tree = scanner::scan(r, &scanner::ScanOptions::default()).unwrap();
+        let t: Vec<(String, u64, u64)> = super::file_type_totals(&tree)
+            .into_iter()
+            .map(|t| (t.ext, t.files, t.size))
+            .collect();
+        assert_eq!(
+            t,
+            [
+                ("mp4".into(), 2, 5000),
+                ("gz".into(), 1, 500),
+                (String::new(), 2, 30)
+            ]
+        );
+        let sub = super::find_node(&tree, &r.join("sub").join("B.mp4")).unwrap();
+        assert_eq!(&*tree.node(sub).name, "b.mp4");
+        assert_eq!(super::find_node(&tree, r), Some(tree.root()));
+        assert_eq!(super::find_node(&tree, &r.join("nope")), None);
+    }
+
     use super::*;
 
     #[test]

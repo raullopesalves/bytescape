@@ -39,8 +39,13 @@
       </section>
       <div class="start-actions">
         <button id="pick-empty" class="primary big">Browse for a folder…</button>
+        <form class="path-form" id="path-form">
+          <input id="path-in" spellcheck="false" placeholder="Or type a path: D:\Games, \\server\share" aria-label="Folder or network path to scan">
+          <button class="big">Scan</button>
+        </form>
         <button id="start-back" class="big" hidden>Back to results</button>
       </div>
+      <label class="shell-toggle"><input type="checkbox" id="shell-menu"> Show “Scan with Bytescape” when right-clicking a folder or drive in Explorer</label>
     </div>
   </div>
 
@@ -123,6 +128,7 @@
               <button data-view="overview" role="tab">Overview</button>
               <button data-view="tree" role="tab">Tree</button>
               <button data-view="results" role="tab" hidden>Results</button>
+              <button data-view="types" role="tab">File types</button>
               <button data-view="history" role="tab">History</button>
               <button data-view="dupes" role="tab">Duplicates</button>
             </div>
@@ -131,6 +137,7 @@
         <div class="overview" id="overview" hidden></div>
         <div class="overview" id="history" hidden></div>
         <div class="overview" id="dupes" hidden></div>
+        <div class="overview" id="types" hidden></div>
         <div class="thead" id="thead" role="row">
           <div data-key="name" role="columnheader">Name</div>
           <div data-key="size" class="num" role="columnheader">Size</div>

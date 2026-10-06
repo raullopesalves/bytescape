@@ -398,6 +398,20 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .ov-card.wide { flex-basis: 100%; }
 .ov-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
 .ov-big { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* File types */
+.types-list li { grid-template-columns: auto minmax(70px, 120px) minmax(0, 1fr) auto 80px; align-items: center; gap: 2px 10px; }
+.types-list li:not([data-ext]) { cursor: default; }
+.types-list .t-ext { font-weight: 600; }
+.types-list .t-cat, .types-list .t-files { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.types-list .t-size { text-align: right; font-variant-numeric: tabular-nums; }
+.types-list .cat-bar { grid-column: 2 / -1; margin: 0; }
+/* Windows cleanup */
+.clean-list { list-style: none; margin: 0; padding: 0; }
+.clean-list li { padding: 8px 0; border-top: 1px solid var(--line); }
+.clean-list .c-head { display: flex; align-items: center; gap: 10px; }
+.clean-list .c-head .o-name { flex: 1; font-weight: 600; }
+.clean-list .c-head .o-size { font-variant-numeric: tabular-nums; }
+.clean-list .note { margin: 4px 0 0; }
 .ov-card .note { margin: 2px 0 10px; }
 .ov-list { list-style: none; margin: 0 0 10px; padding: 0; }
 .ov-list li { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
@@ -527,7 +541,11 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .recent button:hover { background: var(--hover); }
 .recent .r-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent .r-when { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.start-actions { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; }
+.start-actions { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; align-items: center; }
+.path-form { display: flex; gap: 6px; flex: 1 1 320px; }
+.path-form input { flex: 1; min-width: 0; }
+.shell-toggle { display: flex; gap: 8px; align-items: center; margin-top: 18px; color: var(--muted); font-size: 13px; }
+.d-kind { margin-left: auto; font-size: 11px; color: var(--muted); }
 
 /* Scanning: the squares keep popping in and out while the counters run. */
 .scanning { flex: 1; display: grid; place-items: center; padding: 24px; overflow-y: auto; }

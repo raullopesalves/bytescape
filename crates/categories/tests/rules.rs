@@ -229,6 +229,35 @@ fn apply_to_scanned_tree() {
 }
 
 #[test]
+fn combined_scans_use_each_root_path() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let pkg = dir.path().join("proj/node_modules/pkg");
+    let other = dir.path().join("other");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(pkg.join("index.js"), b"x").unwrap();
+    fs::write(other.join("index.js"), b"x").unwrap();
+    let opts = scanner::ScanOptions::default();
+    let mut tree = scanner::ScanTree::combine(
+        "All drives",
+        vec![
+            scanner::scan(&pkg, &opts).unwrap(),
+            scanner::scan(&other, &opts).unwrap(),
+        ],
+    );
+    let rules = Rules::defaults();
+    rules.apply(&mut tree);
+    let id = |i: u32| {
+        rules
+            .category(tree.node(i).category)
+            .map_or("", |c| c.id.as_str())
+    };
+    // The first root is inside node_modules, the second isn't.
+    assert_eq!(id(1), "dev-deps");
+    assert_eq!(id(2), "");
+}
+
+#[test]
 fn folders_above_the_scanned_one_count() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let pkg = dir.path().join("proj/node_modules/pkg");

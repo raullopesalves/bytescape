@@ -252,6 +252,96 @@ impl ScanTree {
         out.into_iter().map(|(_, id)| id).collect()
     }
 
+    /// Puts several scans under one made-up folder named `name` (for example
+    /// "All drives"): each scan's root becomes one of its children, in the
+    /// order given. The roots keep their full paths as names, so
+    /// [`path`](Self::path) still gives real paths below the new root. Each
+    /// scan keeps its own hardlink accounting (they are separate drives).
+    pub fn combine(name: &str, trees: Vec<ScanTree>) -> ScanTree {
+        let k = trees.len() as NodeId;
+        let total = 1 + trees.iter().map(|t| t.nodes.len()).sum::<usize>();
+        // The scans' roots go first (ids 1..=k) so the new root's children
+        // are contiguous; then each scan's other nodes, in their order.
+        let mut starts = Vec::with_capacity(trees.len());
+        let mut next = 1 + k;
+        for t in &trees {
+            starts.push(next);
+            next += t.nodes.len() as NodeId - 1;
+        }
+        let map = |j: usize, id: NodeId| {
+            if id == 0 {
+                1 + j as NodeId
+            } else {
+                starts[j] + id - 1
+            }
+        };
+
+        let mut nodes = Vec::with_capacity(total);
+        nodes.push(Node {
+            name: name.into(),
+            parent: 0,
+            first_child: 1,
+            child_count: k,
+            kind: NodeKind::Dir,
+            flags: 0,
+            category: 0,
+            size: 0,
+            alloc: 0,
+            modified: 0,
+            files: 0,
+        });
+        for (j, t) in trees.iter().enumerate() {
+            let mut r = t.nodes[0].clone();
+            r.parent = 0;
+            r.first_child = map(j, r.first_child);
+            nodes.push(r);
+        }
+        let mut stats = ScanStats {
+            dirs: 1,
+            method: crate::ScanMethod::Mft,
+            ..Default::default()
+        };
+        let mut errors = Vec::new();
+        let mut skipped = Vec::new();
+        for (j, t) in trees.into_iter().enumerate() {
+            let root = &nodes[1 + j];
+            let (size, alloc, files, modified) = (root.size, root.alloc, root.files, root.modified);
+            let r = &mut nodes[0];
+            r.size += size;
+            r.alloc += alloc;
+            r.files += files;
+            r.modified = r.modified.max(modified);
+            let s = &t.stats;
+            stats.files += s.files;
+            stats.dirs += s.dirs;
+            stats.symlinks += s.symlinks;
+            stats.errors += s.errors;
+            stats.hardlink_dups += s.hardlink_dups;
+            stats.elapsed += s.elapsed;
+            if s.method != crate::ScanMethod::Mft {
+                stats.method = crate::ScanMethod::Walk;
+            }
+            stats.mft_needs_admin |= s.mft_needs_admin;
+            if let Some(why) = &s.mft_skipped {
+                skipped.push(format!("{}: {why}", t.nodes[0].name));
+            }
+            errors.extend(t.errors.into_iter().map(|(id, e)| (map(j, id), e)));
+            nodes.extend(t.nodes.into_iter().skip(1).map(|mut n| {
+                n.parent = map(j, n.parent);
+                n.first_child = map(j, n.first_child);
+                n
+            }));
+        }
+        if !skipped.is_empty() {
+            stats.mft_skipped = Some(skipped.join("; "));
+        }
+        ScanTree {
+            nodes,
+            errors,
+            stats,
+        }
+    }
+
     /// Fills in folder totals and marks duplicate hardlinks.
     ///
     /// Children always have larger ids than their parent, so walking the

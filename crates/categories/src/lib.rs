@@ -303,8 +303,19 @@ impl Rules {
                 let parent = &dir_paths[node.parent as usize];
                 let inherited = tree.node(node.parent).category;
                 if node.kind == NodeKind::Dir {
-                    let path = join(parent, &node.name);
-                    let cat = self.node_category(Some(&path), &node.name, node.kind, inherited);
+                    // A scan's root under a combined root ("All drives")
+                    // keeps its full path as its name, and is classified
+                    // like a root.
+                    let cat;
+                    let path = if std::path::Path::new(&*node.name).is_absolute() {
+                        let path = normalize(&node.name);
+                        cat = self.classify(&path, true);
+                        path
+                    } else {
+                        let path = join(parent, &node.name);
+                        cat = self.node_category(Some(&path), &node.name, node.kind, inherited);
+                        path
+                    };
                     dir_paths[i] = path.into();
                     cat
                 } else if self.file_globs {

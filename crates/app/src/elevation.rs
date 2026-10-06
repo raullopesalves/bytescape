@@ -41,11 +41,7 @@ pub fn is_elevated() -> bool {
 /// to scan `path`. Errors if the user says no or it can't start.
 #[cfg(windows)]
 pub fn relaunch(path: &str, owner: isize) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let wide = |s: &std::ffi::OsStr| s.encode_wide().chain([0]).collect::<Vec<u16>>();
     // One quoted argument. A trailing backslash would escape the closing
     // quote ("C:\" reads as C:"), so double it.
     let arg = if path.ends_with('\\') {
@@ -53,28 +49,50 @@ pub fn relaunch(path: &str, owner: isize) -> Result<(), String> {
     } else {
         format!("\"{path}\"")
     };
-    let (verb, file, params) = (
-        wide("runas".as_ref()),
-        wide(exe.as_os_str()),
-        wide(arg.as_ref()),
-    );
+    shell_execute("runas", &exe.display().to_string(), &arg, true, owner)
+}
+
+/// Starts `file` with `params` through the shell; the verb "runas" asks
+/// Windows for administrator rights first. `show` false hides its window.
+#[cfg(windows)]
+pub fn shell_execute(
+    verb: &str,
+    file: &str,
+    params: &str,
+    show: bool,
+    owner: isize,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (v, f, p) = (wide(verb), wide(file), wide(params));
     // SAFETY: all strings are NUL-terminated and outlive the call.
     let r = unsafe {
         ShellExecuteW(
             owner as _,
-            verb.as_ptr(),
-            file.as_ptr(),
-            params.as_ptr(),
+            v.as_ptr(),
+            f.as_ptr(),
+            p.as_ptr(),
             std::ptr::null(),
-            1, // SW_SHOWNORMAL
+            if show { 1 } else { 0 }, // SW_SHOWNORMAL, SW_HIDE
         )
     } as isize;
     // Values above 32 mean it started; 5 is "access denied" (the user said no).
     match r {
         r if r > 32 => Ok(()),
         5 => Err("Not started: administrator rights were not given.".into()),
-        r => Err(format!("Couldn't start as administrator (code {r}).")),
+        r => Err(format!("Couldn't start {file} (code {r}).")),
     }
+}
+
+#[cfg(not(windows))]
+pub fn shell_execute(
+    _verb: &str,
+    _file: &str,
+    _params: &str,
+    _show: bool,
+    _owner: isize,
+) -> Result<(), String> {
+    Err("Only on Windows.".into())
 }
 
 #[cfg(not(windows))]

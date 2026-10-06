@@ -107,6 +107,9 @@ pub fn assess(tree: &ScanTree, rules: &Rules, dominant: &[u16], id: NodeId) -> A
         return block("Online-only file: deleting it would also delete the copy in the cloud.");
     }
 
+    if tree.path(id).parent().is_none() {
+        return block("A whole drive. Pick what's inside it instead.");
+    }
     if let Some(a) = caution(tree, id) {
         return a;
     }

@@ -22,6 +22,8 @@ const categories = [
 ];
 const handlers = {};
 let dupesDone = false;
+let mockShellMenu = false;
+const mockCleanups = []; // cleanups "run", for tests
 const mockHistory = [
   { id: 3, taken: 1791300000, size: 1800 },
   { id: 2, taken: 1790700000, size: 1500 },
@@ -287,9 +289,22 @@ window.__TAURI__ = {
           return basketView();
         case 'export': return { path: `C:\\exports\\${args.search ? 'search results' : byId.get(args.id).name}.${args.format}`, rows: 3, millis: 1 };
         case 'drives': return [
-          { path: 'C:\\', label: 'Windows', total: 512e9, free: 120e9 },
-          { path: 'D:\\', label: '', total: 2e12, free: 1.5e12 },
+          { path: 'C:\\', label: 'Windows', total: 512e9, free: 120e9, kind: 'fixed' },
+          { path: 'D:\\', label: '', total: 2e12, free: 1.5e12, kind: 'fixed' },
+          { path: 'Z:\\', label: 'NAS', total: 4e12, free: 1e12, kind: 'network' },
         ];
+        case 'file_types': return [
+          { ext: 'bin', files: 1, size: 1000, alloc: 1000, category: 2 },
+          { ext: 'txt', files: 5, size: 800, alloc: 800, category: 1 },
+          { ext: '', files: 0, size: 0, alloc: 0, category: 0 },
+        ];
+        case 'cleanup_status': return {
+          recycleBytes: 3.2e9, recycleItems: 41, hiberfil: 6.8e9, windowsOld: true,
+          systemDrive: 'C:', windowsOldSize: null, winsxsSize: null, elevated: false,
+        };
+        case 'run_cleanup': mockCleanups.push(args.what); return true;
+        case 'shell_menu_state': return mockShellMenu;
+        case 'set_shell_menu': mockShellMenu = args.on; return mockShellMenu;
         default: return null;
       }
     },
