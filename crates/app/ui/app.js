@@ -31,6 +31,42 @@ let visible = [];          // rows on screen in order: { row, depth, parentSize 
 let selected = -1;         // index into `visible`: the cursor
 let marked = new Set();    // ids of the selected rows (one or more)
 let anchorId = -1;         // node id where a Shift range starts
+
+// Search results grouped by folder are a second tree run by the same code:
+// the variables above hold whichever tree is showing, `otherTree` the other.
+let shownTree = 'tree';    // 'tree' or 'groups'
+let otherTree = null;
+
+function useTree(which) {
+  if (which === shownTree || !otherTree) return;
+  const mine = { cache, expanded, visible, selected, marked, anchorId };
+  ({ cache, expanded, visible, selected, marked, anchorId } = otherTree);
+  otherTree = mine;
+  shownTree = which;
+  // Sorting may have changed while this tree was away.
+  for (const kids of cache.values()) sortRows(kids);
+  rebuild();
+  select(selected, 'keep'); // the status bar shows this tree's selection
+}
+
+/** A fresh tree with just `root`, its children not loaded yet. */
+function newTree(root) {
+  return {
+    cache: new Map(), expanded: new Set(),
+    visible: [{ row: root, depth: 0, parentSize: root.size }],
+    selected: 0, marked: new Set([root.id]), anchorId: root.id,
+  };
+}
+
+/** Whether the list shows search results as one list by size. */
+const flat = () => view === 'results' && !grouped;
+
+const SHIELD = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 1 2.5 3.2v4.3c0 3.4 2.3 6 5.5 7.5 3.2-1.5 5.5-4.1 5.5-7.5V3.2z" fill="currentColor"/></svg>';
+
+/** A shield before the name of anything that probably shouldn't be touched. */
+function riskHtml(r) {
+  return r.risk ? `<span class="risk ${r.risk.level}" title="${esc(r.risk.reason)}">${SHIELD}</span>` : '';
+}
 let sort = { key: 'size', desc: true };
 
 // ---------- formatting ----------
@@ -120,6 +156,8 @@ listen('scan-error', (e) => {
 });
 
 async function loadResult() {
+  useTree('tree');
+  otherTree = null;
   summary = await invoke('summary');
   cats = new Map(summary.categories.map((c) => [c.id, c]));
   cache = new Map();
@@ -176,9 +214,19 @@ function renderSide() {
     ['Folders', fmtInt(s.dirs)],
     ...extra,
   ];
+  let drive = '';
+  if (s.driveTotal) {
+    const used = s.driveTotal - s.driveFree;
+    const pct = (n) => Math.min(100, (n * 100) / s.driveTotal);
+    drive = `<div class="drive-use" title="The drive: ${human(s.driveFree)} free. The darker part is what you scanned.">
+      <b>${human(used)}</b> of ${human(s.driveTotal)} used on the drive
+      <div class="du-bar"><span class="du-used" style="width:${pct(used)}%"></span><span class="du-scan" style="width:${pct(Math.min(r.alloc, used))}%"></span></div>
+    </div>`;
+  }
   $('totals').innerHTML = `
     <div class="root-name">${esc(r.name)}</div>
     <div class="big-size">${human(r.size)}</div>
+    ${drive}
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
 
   const list = [...s.categories].filter((c) => c.files > 0).sort((a, b) => b.size - a.size);
@@ -229,9 +277,17 @@ async function expand(i) {
   if (r.kind !== 'dir' || r.children === 0 || expanded.has(r.id)) return;
   let kids = cache.get(r.id);
   if (!kids) {
-    kids = await invoke('children', { id: r.id });
+    const into = cache;
+    try {
+      kids = shownTree === 'groups'
+        ? await invoke('search_children', { generation: search.generation, id: r.id })
+        : await invoke('children', { id: r.id });
+    } catch {
+      return; // a newer search replaced this one
+    }
     sortRows(kids);
-    cache.set(r.id, kids);
+    into.set(r.id, kids);
+    if (cache !== into) return; // the other tree is showing now
   }
   // The list may have changed while waiting.
   const at = visible.indexOf(v);
@@ -317,7 +373,7 @@ const MIN_COL = 40;
 let colWidths = {};
 
 const colWidth = (k) => colWidths[k] ?? COLS[k].w;
-const columnsOf = (v) => (v === 'results' ? RESULT_COLS : TREE_COLS);
+const columnsOf = (v) => (v === 'results' && !grouped ? RESULT_COLS : TREE_COLS);
 
 function applyColumns() {
   const keys = columnsOf(view);
@@ -332,7 +388,7 @@ function applyColumns() {
 function renderHead() {
   $('thead').innerHTML = columnsOf(view).map((k) => {
     const c = COLS[k];
-    const label = k === 'pct' && view === 'results' ? '% of all' : c.label;
+    const label = k === 'pct' && flat() ? '% of all' : c.label;
     return `<div${c.sort ? ` data-key="${c.sort}"` : ''}${c.num ? ' class="num"' : ''} role="columnheader">${label}<span class="grip" data-grip="${k}" title="Drag to resize, double-click to reset"></span></div>`;
   }).join('');
   markSortHeader();
@@ -370,8 +426,10 @@ function rowHtml(i) {
   const tagHtml = (tags.length ? `<span class="tag">${tags.join(', ')}</span>` : '')
     + (basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : '');
 
+  const hits = shownTree === 'groups' && r.kind === 'dir' && !r.hit
+    ? `<span class="hits" title="Matching files in it">(${fmtInt(r.files)})</span>` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="treeitem" aria-level="${depth + 1}"${r.kind === 'dir' && r.children > 0 ? ` aria-expanded="${open}"` : ''}>
-    <div class="name-cell" style="padding-left:${4 + depth * 16}px"><span class="twisty">${twisty}</span><span class="label" title="${esc(r.name)}">${esc(r.name)}</span>${tagHtml}</div>
+    <div class="name-cell" style="padding-left:${4 + depth * 16}px"><span class="twisty">${twisty}</span>${riskHtml(r)}<span class="label" title="${esc(r.name)}">${esc(r.name)}</span>${hits}${tagHtml}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
     <div class="num">${human(r.alloc)}</div>
@@ -382,7 +440,7 @@ function rowHtml(i) {
 }
 
 function render() {
-  if (view === 'results') return renderResults();
+  if (flat()) return renderResults();
   const sc = $('scroller');
   $('spacer').style.height = `${visible.length * ROW_H}px`;
   const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - OVERSCAN);
@@ -433,10 +491,11 @@ async function select(i, how = 'one') {
   render();
   drawOverlay();
   if (marked.size > 1) return showMany(marked.size, treeMarkedBytes());
+  const risk = visible[i].row.risk;
   try {
     const path = await invoke('node_path', { id });
     if (visible[selected]?.row.id === id) {
-      $('selpath').textContent = path;
+      $('selpath').textContent = risk ? `${path}  ·  ${risk.reason}` : path;
       $('reveal').hidden = false;
     }
   } catch (e) {
@@ -486,7 +545,7 @@ function parentIndex(i) {
 
 function onKey(e) {
   if (keyMenu(e)) return;
-  if (view === 'results') return onResultsKey(e);
+  if (flat()) return onResultsKey(e);
   if (selected < 0) return;
   const page = Math.max(1, Math.floor($('scroller').clientHeight / ROW_H) - 1);
   const v = visible[selected];
@@ -639,7 +698,7 @@ function drawMap() {
 
 /** Rectangle of the tree's selected node, or of its nearest drawn ancestor. */
 function selectedRect() {
-  if (view === 'results') return resultRect();
+  if (flat()) return resultRect();
   for (let i = selected; i >= 0; i = parentIndex(i)) {
     const r = map.index.get(visible[i]?.row.id);
     if (r !== undefined) return r;
@@ -775,6 +834,7 @@ const PAGE = 200;   // results fetched per request
 const DAY = 86400;
 
 let view = 'tree';  // 'tree', or 'results' while a filter is on
+let grouped = true; // results grouped by folder (else one list by size)
 let search = null;  // { generation, count, bytes, items, pages, sel, anc }
 let searchSeq = 0;
 let treeScroll = 0;
@@ -822,6 +882,9 @@ async function applyFilters() {
     setView(view === 'results' ? 'tree' : view);
   } else {
     search = { generation: r.generation, count: r.count, bytes: r.bytes, items: [], pages: new Set(), sel: -1, anc: [], marked: new Set(), anchor: -1 };
+    const groups = newTree(r.root);
+    if (shownTree === 'groups') ({ cache, expanded, visible, selected, marked, anchorId } = groups);
+    else otherTree = groups;
     const what = r.count === 1 ? 'match' : 'matches';
     $('f-summary').textContent = r.count === 0
       ? 'Nothing matches these filters.'
@@ -856,8 +919,11 @@ function setView(v) {
     b.setAttribute('aria-selected', String(b.dataset.view === v));
   }
   $('viewbar').querySelector('[data-view=results]').hidden = !search;
-  $('thead').classList.toggle('results', v === 'results');
+  if (!panel) useTree(v === 'results' && grouped ? 'groups' : 'tree');
+  $('thead').classList.toggle('results', flat());
   renderHead();
+  // Grouped results open with the scanned folder's matches showing.
+  if (shownTree === 'groups' && visible.length === 1 && !expanded.has(visible[0].row.id)) expand(0);
   if (v === 'overview') renderOverview();
   else if (v === 'history') renderHistory();
   else if (v === 'dupes') renderDupes();
@@ -893,7 +959,7 @@ function resultHtml(i) {
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
-    <div class="name-cell" style="padding-left:8px"><span class="label">${esc(r.name)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
+    <div class="name-cell" style="padding-left:8px">${riskHtml(r)}<span class="label">${esc(r.name)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
     <div class="folder-cell">${folderLinks(it)}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
@@ -1026,12 +1092,17 @@ function onResultsKey(e) {
 
 /** Id of the selected node in whichever list is showing. */
 function currentId() {
-  return view === 'results' ? search?.items[search.sel]?.row.id : visible[selected]?.row.id;
+  return flat() ? search?.items[search.sel]?.row.id : visible[selected]?.row.id;
 }
 
 /** Ids of every selected row in the list showing (the cursor's if none). */
 async function selectionIds() {
-  if (view !== 'results') return marked.size ? [...marked] : [currentId()];
+  if (!flat()) {
+    const ids = marked.size ? [...marked] : [currentId()];
+    // A folder in grouped results stands for its matches, not all it holds.
+    if (shownTree !== 'groups') return ids;
+    return invoke('search_matches_in', { generation: search.generation, ids });
+  }
   const s = search;
   if (!s) return [];
   if (!s.marked.size) return [currentId()];
@@ -1161,12 +1232,14 @@ function openMenuAt(x, y, actions) {
   menu.querySelector('button').focus();
 }
 
-function openMenu(e, id, { zoomId, showInTree, many, allIn } = {}) {
+function openMenu(e, id, { zoomId, showInTree, many, allIn, matches } = {}) {
   e.preventDefault();
   if (id === undefined) return;
-  const toggle = many
-    ? [allIn ? `Take ${fmtInt(many)} items out of cleanup basket` : `Add ${fmtInt(many)} items to cleanup basket`, basketToggleSelection]
-    : [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)];
+  const what = many > 1 ? ` ${fmtInt(many)} items` : '';
+  let toggle;
+  if (matches) toggle = [allIn ? `Take${what} out of cleanup basket` : 'Add the matching files to cleanup basket', basketToggleSelection];
+  else if (many) toggle = [allIn ? `Take${what} out of cleanup basket` : `Add${what} to cleanup basket`, basketToggleSelection];
+  else toggle = [basketIds.has(id) ? 'Take out of cleanup basket' : 'Add to cleanup basket', () => basketToggle(id)];
   const actions = [
     toggle,
     ['Show in Explorer', () => invoke('reveal', { id }).catch((err) => setStatus(String(err), true))],
@@ -1188,7 +1261,7 @@ function closeMenu() {
 function rowMenu(i, x, y) {
   const at = { preventDefault() {}, clientX: x, clientY: y };
   // Right-clicking a selected row keeps the selection, as in Explorer.
-  if (view === 'results') {
+  if (flat()) {
     const keep = search?.marked.has(i) && search.marked.size > 1;
     selectResult(i, keep ? 'keep' : 'one');
     const r = search?.items[i]?.row;
@@ -1201,8 +1274,11 @@ function rowMenu(i, x, y) {
     const r = visible[i].row;
     const keep = marked.has(r.id) && marked.size > 1;
     select(i, keep ? 'keep' : 'one');
-    const allIn = keep && visible.every((v, k) => !marked.has(v.row.id) || treeRowInBasket(k));
-    openMenu(at, r.id, { many: keep ? marked.size : 0, allIn, zoomId: r.kind === 'dir' ? r.id : undefined });
+    const n = keep ? marked.size : 1;
+    const allIn = visible.every((v, k) => !marked.has(v.row.id) || treeRowInBasket(k));
+    // In grouped results a folder that doesn't match stands for its matches.
+    const matches = shownTree === 'groups' && !allIn && visible.some((v) => marked.has(v.row.id) && v.row.kind === 'dir' && !v.row.hit);
+    openMenu(at, r.id, { many: n > 1 || shownTree === 'groups' ? n : 0, allIn, matches, zoomId: r.kind === 'dir' ? r.id : undefined });
   }
 }
 
@@ -1210,7 +1286,7 @@ function rowMenu(i, x, y) {
 function keyMenu(e) {
   if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return false;
   e.preventDefault();
-  const i = view === 'results' ? search?.sel : selected;
+  const i = flat() ? search?.sel : selected;
   if (i === undefined || i < 0) return true;
   const el = document.querySelector(`#rows .row[data-i="${i}"]`);
   const r = el?.getBoundingClientRect();
@@ -1310,6 +1386,7 @@ listen('delete-done', async (e) => {
 
 /** Reloads totals, tree, basket, search and treemap after a delete. */
 async function refreshAfterDelete() {
+  useTree('tree');
   summary = await invoke('summary');
   cats = new Map(summary.categories.map((c) => [c.id, c]));
   renderSide();
@@ -1332,7 +1409,7 @@ async function refreshAfterDelete() {
   if (search) await applyFilters();
   else await layoutMap();
   if (view === 'dupes') renderDupes();
-  if (view === 'tree') select(selected);
+  if (view === 'tree' || shownTree === 'groups') select(selected);
 }
 
 // ---------- overview, export, start screen ----------
@@ -1719,7 +1796,7 @@ $('reveal').addEventListener('click', () => {
 $('thead').addEventListener('click', (e) => {
   if (e.target.closest('[data-grip]')) return;
   const key = e.target.closest('[data-key]')?.dataset.key;
-  if (key && view === 'tree') setSort(key);
+  if (key && !flat() && (view === 'tree' || view === 'results')) setSort(key);
 });
 
 $('rows').addEventListener('click', (e) => {
@@ -1729,22 +1806,27 @@ $('rows').addEventListener('click', (e) => {
   const how = selectHow(e, false);
   const crumb = e.target.closest('.crumb');
   if (crumb && how === 'one') return showFolderInTree(i, Number(crumb.dataset.k));
-  if (view === 'results') return selectResult(i, how);
+  if (flat()) return selectResult(i, how);
   if (how === 'one' && e.target.closest('.twisty')) toggle(i);
   select(i, how);
 });
 $('rows').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.row');
   if (!el) return;
-  if (view === 'results') showInTree(Number(el.dataset.i));
-  else if (!e.target.closest('.twisty')) toggle(Number(el.dataset.i));
+  const i = Number(el.dataset.i);
+  if (flat()) showInTree(i);
+  else if (shownTree === 'groups' && visible[i]?.row.kind !== 'dir') {
+    const id = visible[i].row.id;
+    setView('tree');
+    revealInTree(id);
+  } else if (!e.target.closest('.twisty')) toggle(i);
 });
 
 for (const id of ['f-name', 'f-ext']) $(id).addEventListener('input', applyFiltersSoon);
 for (const id of ['f-min', 'f-max', 'f-age', 'f-cat', 'f-folders']) $(id).addEventListener('change', applyFilters);
 $('f-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') applyFilters();
-  if (e.key === 'ArrowDown') { e.preventDefault(); $('scroller').focus(); if (view === 'results') selectResult(Math.max(0, search?.sel ?? 0)); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); $('scroller').focus(); if (flat()) selectResult(Math.max(0, search?.sel ?? 0)); }
 });
 $('f-clear').addEventListener('click', () => {
   resetFilters();
@@ -1848,6 +1930,16 @@ try {
   const saved = JSON.parse(store.get('columns') ?? '{}');
   for (const k of Object.keys(COLS)) if (Number.isFinite(saved[k])) colWidths[k] = Math.max(MIN_COL, saved[k]);
 } catch { /* defaults */ }
+grouped = store.get('grouped') !== 'false';
+$('f-group').checked = grouped;
+$('f-group').addEventListener('change', () => {
+  grouped = $('f-group').checked;
+  store.set('grouped', grouped);
+  if (view === 'results') {
+    $('scroller').scrollTop = 0;
+    setView('results');
+  }
+});
 renderHead();
 $('scroller').addEventListener('keydown', onKey);
 new ResizeObserver(renderSoon).observe($('scroller'));

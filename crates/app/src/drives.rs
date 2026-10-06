@@ -81,6 +81,24 @@ pub fn list() -> Vec<Drive> {
     Vec::new()
 }
 
+/// Total and free bytes of the drive holding `path`.
+#[cfg(windows)]
+pub fn space(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let (mut free, mut total) = (0u64, 0u64);
+    // SAFETY: `wide` is NUL-terminated; the out-params are valid or null.
+    let ok =
+        unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
+    (ok != 0 && total > 0).then_some((total, free))
+}
+
+#[cfg(not(windows))]
+pub fn space(_path: &std::path::Path) -> Option<(u64, u64)> {
+    None
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     #[test]
@@ -92,5 +110,7 @@ mod tests {
             .find(|d| d.path.eq_ignore_ascii_case(&format!("{sys}\\")))
             .expect("system drive listed");
         assert!(d.total > 0 && d.free <= d.total);
+        let (total, free) = super::space(&std::env::temp_dir()).expect("space of the temp folder");
+        assert!(total > 0 && free <= total);
     }
 }

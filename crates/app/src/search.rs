@@ -4,6 +4,8 @@
 //! first, plus a mark per node saying whether it matches or has a match
 //! below it (used to dim the treemap).
 
+use std::collections::HashMap;
+
 use rayon::prelude::*;
 use scanner::{flags, Node, NodeId, NodeKind, ScanTree};
 use serde::Deserialize;
@@ -41,6 +43,16 @@ pub struct Results {
     /// Bytes in matching files (each hardlinked file once).
     pub file_bytes: u64,
     pub marks: Vec<Mark>,
+    /// For every marked node: the matches in and below it.
+    pub below: HashMap<NodeId, Totals>,
+}
+
+/// Matching files and their bytes (a matching folder counts whole).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Totals {
+    pub files: u64,
+    pub size: u64,
+    pub alloc: u64,
 }
 
 impl Filter {
@@ -86,10 +98,48 @@ pub fn run(tree: &ScanTree, filter: &Filter) -> Results {
             marks[cur as usize] |= BELOW;
         }
     }
+    // Children come after their parents, so one backward pass adds up each
+    // marked node's matches before its parent needs them.
+    let mut below: HashMap<NodeId, Totals> = HashMap::new();
+    for i in (0..tree.len()).rev() {
+        if marks[i] == 0 {
+            continue;
+        }
+        let id = i as NodeId;
+        let n = tree.node(id);
+        let t = if marks[i] & SELF == 0 {
+            below.get(&id).copied().unwrap_or_default()
+        } else if n.kind == NodeKind::Dir {
+            Totals {
+                files: n.files,
+                size: n.size,
+                alloc: n.alloc,
+            }
+        } else if n.has_flag(flags::HARDLINK_DUP) {
+            Totals {
+                files: 1,
+                ..Totals::default()
+            }
+        } else {
+            Totals {
+                files: 1,
+                size: n.size,
+                alloc: n.alloc,
+            }
+        };
+        below.insert(id, t);
+        if id != tree.root() {
+            let p = below.entry(n.parent).or_default();
+            p.files += t.files;
+            p.size += t.size;
+            p.alloc += t.alloc;
+        }
+    }
     Results {
         ids: hits.into_iter().map(|(_, id)| id).collect(),
         file_bytes,
         marks,
+        below,
     }
 }
 
@@ -345,6 +395,43 @@ mod tests {
             .len(),
             6
         );
+    }
+
+    #[test]
+    fn totals_below_each_folder() {
+        let (_d, tree) = sample();
+        let find = |name: &str| {
+            (0..tree.len() as NodeId)
+                .find(|&i| tree.node(i).name.as_ref() == name)
+                .unwrap()
+        };
+        let r = run(
+            &tree,
+            &Filter {
+                extensions: vec!["mp4".into()],
+                ..Filter::default()
+            },
+        );
+        let files_size = |id| r.below.get(&id).map(|t| (t.files, t.size));
+        assert_eq!(files_size(tree.root()), Some((2, 13000)));
+        assert_eq!(files_size(find("videos")), Some((2, 13000)));
+        assert_eq!(files_size(find("old")), Some((1, 8000)));
+        assert_eq!(files_size(find("clip.mp4")), Some((1, 5000)));
+        // Nothing to do with the matches: no entry.
+        assert_eq!(files_size(find("docs")), None);
+        assert_eq!(files_size(find("CLIP2.MKV")), None);
+
+        // A matching folder counts whole, and its contents not again.
+        let r = run(
+            &tree,
+            &Filter {
+                name: "old".into(),
+                folders: true,
+                ..Filter::default()
+            },
+        );
+        let t = r.below[&tree.root()];
+        assert_eq!((t.files, t.size), (2, 8100)); // old (home.mp4) + report-old.pdf
     }
 
     #[test]

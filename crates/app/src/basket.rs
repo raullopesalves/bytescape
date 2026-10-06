@@ -107,21 +107,14 @@ pub fn assess(tree: &ScanTree, rules: &Rules, dominant: &[u16], id: NodeId) -> A
         return block("Online-only file: deleting it would also delete the copy in the cloud.");
     }
 
-    let path = tree.path(id).display().to_string();
-    if in_recycle_bin(&path) {
-        return block("This is in the Recycle Bin. Empty it from Windows instead.");
+    if let Some(a) = caution(tree, id) {
+        return a;
     }
-    let danger = |r: &str| Assessment {
-        level: Level::Danger,
-        reason: Some(r.into()),
-    };
-    if is_system_path(&path) {
-        return danger(
-            "Part of Windows or an installed program. Deleting it can break Windows or apps.",
-        );
-    }
-    if in_onedrive(&path) || has_placeholder_below(tree, id) {
-        return danger("Synced with OneDrive: deleting it here also deletes it from OneDrive.");
+    if has_placeholder_below(tree, id) {
+        return Assessment {
+            level: Level::Danger,
+            reason: Some(ONEDRIVE.into()),
+        };
     }
 
     let category = if n.kind == NodeKind::Dir {
@@ -161,7 +154,71 @@ pub fn assess(tree: &ScanTree, rules: &Rules, dominant: &[u16], id: NodeId) -> A
     }
 }
 
-/// Windows, program and system folders, and the system files at a drive's root.
+const ONEDRIVE: &str = "Synced with OneDrive: deleting it here also deletes it from OneDrive.";
+
+/// Why deleting or changing node `id` by hand is risky, if it is: the
+/// Recycle Bin, Windows and program folders, a user's registry, app data
+/// folders, OneDrive. Looks only at the path, so it's cheap enough to show
+/// on every row.
+pub fn caution(tree: &ScanTree, id: NodeId) -> Option<Assessment> {
+    caution_for_path(&tree.path(id).display().to_string())
+}
+
+fn caution_for_path(path: &str) -> Option<Assessment> {
+    let say = |level, reason: &str| {
+        Some(Assessment {
+            level,
+            reason: Some(reason.into()),
+        })
+    };
+    if in_recycle_bin(path) {
+        return say(
+            Level::Blocked,
+            "This is in the Recycle Bin. Empty it from Windows instead.",
+        );
+    }
+    if is_system_path(path) {
+        return say(
+            Level::Danger,
+            "Part of Windows or an installed program. Deleting it can break Windows or apps.",
+        );
+    }
+    if is_registry_hive(path) {
+        return say(
+            Level::Danger,
+            "Part of a user's registry. Windows needs it to sign in.",
+        );
+    }
+    if is_app_data_root(path) {
+        return say(
+            Level::Danger,
+            "Settings and data of installed apps. Clean what's inside it (caches, temp files) instead.",
+        );
+    }
+    if in_onedrive(path) {
+        return say(Level::Danger, ONEDRIVE);
+    }
+    None
+}
+
+/// A user's registry files (NTUSER.DAT, UsrClass.dat and their logs).
+fn is_registry_hive(path: &str) -> bool {
+    let name = path.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase();
+    name.starts_with("ntuser.") || name.starts_with("usrclass.dat")
+}
+
+/// A user's AppData folder, or its Local, LocalLow or Roaming folder.
+fn is_app_data_root(path: &str) -> bool {
+    let p = path.trim_end_matches(['\\', '/']).to_lowercase();
+    let mut parts = p.rsplit(['\\', '/']);
+    matches!(
+        (parts.next(), parts.next()),
+        (Some("appdata"), _) | (Some("local" | "locallow" | "roaming"), Some("appdata"))
+    )
+}
+
+/// Windows, program, boot and system folders, and the system files at a
+/// drive's root.
 fn is_system_path(path: &str) -> bool {
     let p = path.strip_prefix(r"\\?\").unwrap_or(path);
     let b = p.as_bytes();
@@ -169,15 +226,33 @@ fn is_system_path(path: &str) -> bool {
         return false;
     }
     let rest = p[3..].to_lowercase();
-    const AREAS: [&str; 6] = [
+    const AREAS: &[&str] = &[
         "windows",
         "program files",
         "program files (x86)",
         "programdata",
         "system volume information",
         "recovery",
+        "boot",
+        "efi",
+        "config.msi",
+        "msocache",
+        "$winreagent",
+        "$sysreset",
+        "$windows.~bt",
+        "$windows.~ws",
+        r"users\default",
     ];
-    const FILES: [&str; 4] = ["pagefile.sys", "hiberfil.sys", "swapfile.sys", "bootmgr"];
+    const FILES: &[&str] = &[
+        "pagefile.sys",
+        "hiberfil.sys",
+        "swapfile.sys",
+        "bootmgr",
+        "bootnxt",
+        "bootsect.bak",
+        "dumpstack.log",
+        "dumpstack.log.tmp",
+    ];
     AREAS
         .iter()
         .any(|a| rest == *a || rest.strip_prefix(a).is_some_and(|r| r.starts_with('\\')))
@@ -459,6 +534,25 @@ mod tests {
         assert!(!in_recycle_bin(r"C:\Users\r\$Recycle.Bin"));
         assert!(in_onedrive(r"C:\Users\r\OneDrive - Work\a.docx"));
         assert!(!in_onedrive(r"C:\Users\r\Documents\a.docx"));
+        assert!(is_system_path(r"C:\Boot\BCD"));
+        assert!(is_system_path(r"C:\Users\Default\NTUSER.DAT"));
+        assert!(!is_system_path(r"C:\Users\Defaults"));
+        assert!(is_registry_hive(r"C:\Users\r\NTUSER.DAT"));
+        assert!(is_registry_hive(r"C:\Users\r\ntuser.dat.LOG1"));
+        assert!(is_registry_hive(
+            r"C:\Users\r\AppData\Local\Microsoft\Windows\UsrClass.dat"
+        ));
+        assert!(!is_registry_hive(r"C:\Users\r\Documents\ntuser-notes.txt"));
+        assert!(is_app_data_root(r"C:\Users\r\AppData"));
+        assert!(is_app_data_root(r"C:\Users\r\AppData\Roaming\"));
+        assert!(is_app_data_root(r"C:\Users\r\AppData\LocalLow"));
+        assert!(!is_app_data_root(r"C:\Users\r\AppData\Local\Temp"));
+        assert!(!is_app_data_root(r"C:\Users\r\Local"));
+        let level = |p| caution_for_path(p).map(|a| a.level);
+        assert_eq!(level(r"C:\Windows\notepad.exe"), Some(Level::Danger));
+        assert_eq!(level(r"C:\$Recycle.Bin\x"), Some(Level::Blocked));
+        assert_eq!(level(r"C:\Users\r\AppData\Local\Temp\x.tmp"), None);
+        assert_eq!(level(r"D:\Games\x.pak"), None);
     }
 
     #[test]

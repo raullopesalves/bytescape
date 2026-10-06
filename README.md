@@ -31,7 +31,10 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   category. Click either one to find the item in the other; double-click to
   zoom into a folder.
 - **Search and filters** by name (with `*` and `?`), extension, size, age and
-  category. The treemap dims everything that doesn't match.
+  category, grouped by folder (with the number of matches in each) or as one
+  list by size. The treemap dims everything that doesn't match.
+- **Flags** on anything that probably shouldn't be deleted by hand: Windows,
+  program and boot folders, registry files, AppData, OneDrive.
 - **Overview** after each scan: where the space goes, how much is in
   categories that are usually safe to clean, and the largest files.
 - **History.** Each scan is remembered, so you can see which folders grew or

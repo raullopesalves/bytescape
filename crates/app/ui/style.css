@@ -129,8 +129,15 @@ main {
   color: var(--muted);
 }
 .totals dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.drive-use { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.drive-use b { color: var(--text); font-weight: 600; }
+.du-bar { position: relative; height: 6px; margin-top: 4px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.du-bar span { position: absolute; top: 0; left: 0; height: 100%; }
+.du-used { background: var(--bar); }
+.du-scan { background: var(--accent); }
 
-.cats { list-style: none; margin: 0; padding: 0; }
+/* Scrolls on its own, so the basket below stays in view. */
+.cats { list-style: none; margin: 0 -6px; padding: 0 6px; max-height: 36vh; overflow-y: auto; }
 .cats li { padding: 6px; margin: 0 -6px; border-bottom: 1px solid var(--line); cursor: pointer; border-radius: 6px; }
 .cats li:last-child { border-bottom: none; }
 .cats li:hover { background: var(--hover); }
@@ -601,6 +608,10 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .row.dup .num, .row.link .label, .row.online .label { color: var(--muted); }
 .row.error .label, .row.readerr .label { color: var(--warn); }
 .tag { margin-left: 6px; font-size: 11px; color: var(--muted); }
+.hits { margin-left: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Probably shouldn't be deleted or changed by hand; the reason is the tooltip. */
+.risk { display: inline-flex; flex: none; margin-right: 5px; color: var(--warn); }
+.risk.blocked { color: #d04848; }
 .folder-cell { font-size: 12px; color: var(--muted); }
 .crumb { cursor: pointer; }
 .crumb:hover { color: var(--accent); text-decoration: underline; }

@@ -28,6 +28,26 @@ const mockHistory = [
   { id: 1, taken: 1789000000, size: 900 },
 ];
 
+// Rows as the app sends them: "c" and what's in it are flagged like a system folder.
+function row(n) {
+  const r = structuredClone(n);
+  if (chain(n.id).some(([, name]) => name === 'c')) r.risk = { level: 'danger', reason: 'Part of Windows or an installed program. Deleting it can break Windows or apps.' };
+  return r;
+}
+
+// A node as grouped search results see it: totals of the matches in it.
+function matchedRow(n) {
+  const r = row(n);
+  const mark = searchState.marks.get(n.id) ?? 0;
+  const hits = searchState.ids.map((id) => byId.get(id)).filter((h) => h.id === n.id || below(h.id, n.id));
+  r.size = hits.reduce((t, h) => t + h.size, 0);
+  r.alloc = r.size;
+  r.files = hits.reduce((t, h) => t + (h.kind === 'file' ? 1 : h.files), 0);
+  r.children = kidsOf(n.id).filter((k) => searchState.marks.has(k.id)).length;
+  if (mark & 1) r.hit = true;
+  return r;
+}
+
 // Search: name substring, extensions, min size and category, like src/search.rs.
 let searchState = null; // { generation, ids, marks }
 let generation = 0;
@@ -51,7 +71,7 @@ function runSearch(f) {
   }
   searchState = { generation, ids: hits.map((h) => h.id), marks };
   const bytes = hits.filter((h) => h.kind === 'file').reduce((t, h) => t + h.size, 0);
-  return { generation, count: hits.length, bytes, millis: 0 };
+  return { generation, count: hits.length, bytes, millis: 0, root: matchedRow(byId.get(0)) };
 }
 
 // Cleanup basket. Fake assessments: the root is blocked, a folder named "c"
@@ -179,8 +199,23 @@ window.__TAURI__ = {
           hardlinkDups: 0, scanMs: 12, categoriseMs: 1, categories,
           method: 'walk', mftSkipped: 'reading the MFT needs administrator rights', adminWouldHelp: true,
           rulesFile: 'C:\\config\\categories.toml', rulesError: null,
+          driveTotal: 512e9, driveFree: 120e9,
         };
-        case 'children': return structuredClone(kidsOf(args.id));
+        case 'children': return kidsOf(args.id).map(row);
+        case 'search_children':
+          if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');
+          return kidsOf(args.id).filter((k) => searchState.marks.has(k.id)).map(matchedRow);
+        case 'search_matches_in': {
+          if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');
+          const out = new Set();
+          const visit = (id) => {
+            const m = searchState.marks.get(id) ?? 0;
+            if (m & 1) out.add(id);
+            else if (m & 2) for (const k of kidsOf(id)) visit(k.id);
+          };
+          args.ids.forEach(visit);
+          return [...out];
+        }
         case 'node_path': return chain(args.id).map(([, name]) => name).join('\\');
         case 'node_details': return { row: structuredClone(byId.get(args.id)), path: chain(args.id).map(([, name]) => name).join('\\') };
         case 'ancestors': return chain(args.id);
@@ -190,7 +225,7 @@ window.__TAURI__ = {
         case 'search_page': {
           if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');
           return searchState.ids.slice(args.offset, args.offset + args.limit)
-            .map((id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, name]) => name).join('\\') }));
+            .map((id) => ({ row: row(byId.get(id)), path: chain(id).map(([, name]) => name).join('\\') }));
         }
         case 'search_ids': {
           if (!searchState || searchState.generation !== args.generation) throw new Error('That search is out of date.');

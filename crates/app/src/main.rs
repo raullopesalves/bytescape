@@ -83,6 +83,18 @@ struct Row {
     category: u16,
     flags: u8,
     children: u32,
+    /// Why it probably shouldn't be deleted or changed by hand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    risk: Option<Risk>,
+    /// In search results grouped by folder: the node matches itself.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    hit: bool,
+}
+
+#[derive(Serialize)]
+struct Risk {
+    level: basket::Level,
+    reason: String,
 }
 
 impl Row {
@@ -108,8 +120,36 @@ impl Row {
                 .child_ids(id)
                 .filter(|&c| !tree.node(c).has_flag(flags::REMOVED))
                 .count() as u32,
+            risk: (id != tree.root())
+                .then(|| basket::caution(tree, id))
+                .flatten()
+                .map(|a| Risk {
+                    level: a.level,
+                    reason: a.reason.unwrap_or_default(),
+                }),
+            hit: false,
         }
     }
+
+    /// The row as search results see it: size, on disk and files count only
+    /// the matches in it, and only children holding matches count.
+    fn matched(tree: &ScanTree, results: &search::Results, id: NodeId) -> Row {
+        let mut r = Row::new(tree, id);
+        let t = results.below.get(&id).copied().unwrap_or_default();
+        (r.size, r.alloc, r.files) = (t.size, t.alloc, t.files);
+        r.children = matched_children(tree, results, id).count() as u32;
+        r.hit = results.marks[id as usize] & search::SELF != 0;
+        r
+    }
+}
+
+fn matched_children<'a>(
+    tree: &'a ScanTree,
+    results: &'a search::Results,
+    id: NodeId,
+) -> impl Iterator<Item = NodeId> + 'a {
+    tree.child_ids(id)
+        .filter(|&c| results.marks[c as usize] != 0 && !tree.node(c).has_flag(flags::REMOVED))
 }
 
 #[derive(Clone, Serialize)]
@@ -155,6 +195,9 @@ struct Summary {
     mft_skipped: Option<String>,
     /// A whole-drive scan that would be faster as administrator.
     admin_would_help: bool,
+    /// Size and free space of the drive holding the scanned folder.
+    drive_total: Option<u64>,
+    drive_free: Option<u64>,
 }
 
 /// The folder given on the command line (`bytescape <path>`), if any.
@@ -196,6 +239,7 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
     let s = guard.as_ref().ok_or("No scan yet.")?;
     let tree = &s.tree;
     let st = tree.stats();
+    let space = drives::space(&tree.path(tree.root()));
     let categories = s
         .rules
         .totals(tree)
@@ -236,6 +280,8 @@ fn summary(state: State<AppState>) -> Result<Summary, String> {
         },
         mft_skipped: st.mft_skipped.clone(),
         admin_would_help: st.mft_needs_admin,
+        drive_total: space.map(|s| s.0),
+        drive_free: space.map(|s| s.1),
     })
 }
 
@@ -371,6 +417,9 @@ struct SearchSummary {
     count: usize,
     bytes: u64,
     millis: u64,
+    /// The scanned folder with the totals of the matches, for grouping
+    /// results by folder.
+    root: Option<Row>,
 }
 
 /// Runs a search and keeps its results for `search_page` and the treemap.
@@ -388,6 +437,7 @@ fn search(state: State<AppState>, filter: search::Filter) -> Result<SearchSummar
             count: 0,
             bytes: 0,
             millis: 0,
+            root: None,
         });
     }
     let t = Instant::now();
@@ -397,6 +447,7 @@ fn search(state: State<AppState>, filter: search::Filter) -> Result<SearchSummar
         count: results.ids.len(),
         bytes: results.file_bytes,
         millis: t.elapsed().as_millis() as u64,
+        root: Some(Row::matched(&s.tree, &results, s.tree.root())),
     };
     s.search = Some(SearchState {
         generation,
@@ -435,6 +486,64 @@ fn search_page(
             path: s.tree.path(id).display().to_string(),
         })
         .collect())
+}
+
+/// Children of `id` that match search `generation` or hold matches, with
+/// their totals counting only the matches.
+#[tauri::command]
+fn search_children(
+    state: State<AppState>,
+    generation: u64,
+    id: NodeId,
+) -> Result<Vec<Row>, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let st = s
+        .search
+        .as_ref()
+        .filter(|st| st.generation == generation)
+        .ok_or("That search is out of date.")?;
+    if id as usize >= s.tree.len() {
+        return Err(format!("No node {id}."));
+    }
+    Ok(matched_children(&s.tree, &st.results, id)
+        .map(|c| Row::matched(&s.tree, &st.results, c))
+        .collect())
+}
+
+/// The matches of search `generation` at or below `ids`: each node that
+/// matches, else the topmost matches below it. Picking a folder in results
+/// grouped by folder means its matches, not everything in it.
+#[tauri::command]
+fn search_matches_in(
+    state: State<AppState>,
+    generation: u64,
+    ids: Vec<NodeId>,
+) -> Result<Vec<NodeId>, String> {
+    let guard = state.session.lock().unwrap();
+    let s = guard.as_ref().ok_or("No scan yet.")?;
+    let st = s
+        .search
+        .as_ref()
+        .filter(|st| st.generation == generation)
+        .ok_or("That search is out of date.")?;
+    let (tree, results) = (&s.tree, &st.results);
+    let mut stack: Vec<NodeId> = ids
+        .into_iter()
+        .filter(|&i| (i as usize) < tree.len())
+        .collect();
+    let mut out = Vec::new();
+    while let Some(id) = stack.pop() {
+        let mark = results.marks[id as usize];
+        if mark & search::SELF != 0 {
+            out.push(id);
+        } else if mark & search::BELOW != 0 {
+            stack.extend(matched_children(tree, results, id));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
 }
 
 /// Node ids of the results in `ranges` (start, end exclusive) of search
@@ -1074,6 +1183,8 @@ fn main() {
             search,
             search_page,
             search_ids,
+            search_children,
+            search_matches_in,
             clear_search,
             basket_view,
             basket_add,
