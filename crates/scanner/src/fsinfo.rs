@@ -478,7 +478,15 @@ pub(crate) mod imp {
             }
         }
         let alloc = if reported >= 0 {
-            reported as u64
+            let reported = reported as u64;
+            // Clusters are allocated whole. Anything else is a tiny file kept
+            // inside its MFT record (the listing gives its length rounded to
+            // 8): it uses no clusters, and Explorer shows 0 for it too.
+            if vol.cluster > 0 && !reported.is_multiple_of(vol.cluster) {
+                0
+            } else {
+                reported
+            }
         } else {
             round_up(len, vol.cluster)
         };
@@ -594,6 +602,31 @@ mod windows_tests {
         // The slow path agrees on which files are linked.
         let slow_key = |n: &str| slow.iter().find(|e| &*e.name == n).unwrap().key;
         assert_eq!(slow_key("a.bin"), slow_key("link.bin"));
+    }
+
+    #[test]
+    fn files_inside_their_mft_record_use_no_clusters() {
+        // Explorer shows 0 bytes on disk for the two small ones, and whole
+        // clusters for the others (checked by hand on NTFS, 4 KB clusters).
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        for (name, len) in [("100", 100), ("600", 600), ("1000", 1000), ("5000", 5000)] {
+            fs::write(r.join(name), vec![0u8; len]).unwrap();
+        }
+        let vol = volume_info(r);
+        let fast = list_dir_fast(r, &vol, false)
+            .unwrap()
+            .expect("fast listing supported");
+        let alloc = |n: &str| fast.entries.iter().find(|e| &*e.name == n).unwrap().alloc;
+        assert_eq!(alloc("100"), 0);
+        assert_eq!(alloc("600"), 0);
+        for n in ["1000", "5000"] {
+            assert!(
+                alloc(n) > 0 && alloc(n) % vol.cluster == 0,
+                "{n}: {}",
+                alloc(n)
+            );
+        }
     }
 
     #[test]

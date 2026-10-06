@@ -185,10 +185,9 @@ pub(crate) fn parse_record(rec: &mut [u8], number: u64) -> Option<Parsed> {
             }
             ATTR_DATA if name_len == 0 => {
                 if !non_resident {
-                    // Stored inside the record: no clusters of its own. Folder
-                    // listings report its length rounded up to 8 bytes.
-                    let len = value().map_or(0, |v| v.len() as u64);
-                    p.data = Some((len, len.next_multiple_of(8)));
+                    // Stored inside the record: no clusters of its own, so
+                    // nothing on disk (as Explorer shows it).
+                    p.data = Some((value().map_or(0, |v| v.len() as u64), 0));
                 } else if u64_at(a, 0x10)? == 0 {
                     // Only the first piece (starting VCN 0) has the sizes.
                     let size = u64_at(a, 0x30)?;
@@ -847,7 +846,7 @@ mod tests {
                 resident(ATTR_DATA, "", b"hello"),
             ],
         );
-        assert_eq!(parse_record(&mut small, 30).unwrap().data, Some((5, 8)));
+        assert_eq!(parse_record(&mut small, 30).unwrap().data, Some((5, 0)));
 
         let mut packed = record(
             0x01,
