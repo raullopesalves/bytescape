@@ -1,4 +1,4 @@
-//! diskmap desktop app: scan a folder or drive, then browse the result.
+//! Bytescape desktop app: scan a folder or drive, then browse the result.
 //!
 //! The scan runs on a background thread and reports progress through the
 //! `scan-progress` event, then `scan-done` or `scan-error`. The finished tree
@@ -157,7 +157,7 @@ struct Summary {
     admin_would_help: bool,
 }
 
-/// The folder given on the command line (`diskmap <path>`), if any.
+/// The folder given on the command line (`bytescape <path>`), if any.
 #[tauri::command]
 fn initial_path() -> Option<String> {
     std::env::args().nth(1)
@@ -954,14 +954,40 @@ fn load_rules(app: &AppHandle) -> (Rules, Option<String>, Option<String>) {
     }
 }
 
+/// The app's identifier, as in tauri.conf.json: it names its data folders.
+const IDENTIFIER: &str = "io.github.raullopesalves.bytescape";
+/// The identifier before the rename from "diskmap" to Bytescape.
+const OLD_IDENTIFIER: &str = "dev.diskmap.desktop";
+
+/// Moves `<base>\dev.diskmap.desktop` to `<base>\<IDENTIFIER>` in each base
+/// folder, unless the new folder already exists. In %APPDATA% that carries
+/// the scan history, category rules and window position; in %LOCALAPPDATA%,
+/// the WebView2 data with the saved settings. If a move fails (for example
+/// an old window is still open), the old data simply stays where it is.
+fn move_old_data(bases: &[PathBuf]) {
+    for base in bases {
+        let (old, new) = (base.join(OLD_IDENTIFIER), base.join(IDENTIFIER));
+        if old.is_dir() && !new.exists() {
+            let _ = std::fs::rename(&old, &new);
+        }
+    }
+}
+
 fn main() {
+    // Before Tauri or WebView2 open anything in these folders.
+    let bases: Vec<PathBuf> = ["APPDATA", "LOCALAPPDATA"]
+        .iter()
+        .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
+        .collect();
+    move_old_data(&bases);
+
     let elevated = elevation::is_elevated();
     if elevated {
         // WebView2 can't share its data folder between elevated and normal
         // processes, so the elevated app gets its own.
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let dir = PathBuf::from(local)
-                .join("dev.diskmap.desktop")
+                .join(IDENTIFIER)
                 .join("EBWebView-admin");
             std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
         }
@@ -971,7 +997,7 @@ fn main() {
             *app.state::<AppState>().history.lock().unwrap() = scan_history::open(app.handle());
             if elevated {
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.set_title("diskmap (administrator)");
+                    let _ = w.set_title("Bytescape (administrator)");
                 }
             }
             Ok(())
@@ -1012,5 +1038,35 @@ fn main() {
             reveal
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start diskmap");
+        .expect("failed to start Bytescape");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifier_matches_the_tauri_config() {
+        let conf = include_str!("../tauri.conf.json");
+        assert!(conf.contains(&format!("\"identifier\": \"{IDENTIFIER}\"")));
+    }
+
+    #[test]
+    fn old_data_moves_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("roaming"), dir.path().join("local"));
+        std::fs::create_dir_all(a.join(OLD_IDENTIFIER)).unwrap();
+        std::fs::write(a.join(OLD_IDENTIFIER).join("history.sqlite"), b"h").unwrap();
+        // Here the new folder exists already: leave both alone.
+        std::fs::create_dir_all(b.join(OLD_IDENTIFIER)).unwrap();
+        std::fs::create_dir_all(b.join(IDENTIFIER)).unwrap();
+
+        move_old_data(&[a.clone(), b.clone(), dir.path().join("missing")]);
+        assert_eq!(
+            std::fs::read(a.join(IDENTIFIER).join("history.sqlite")).unwrap(),
+            b"h"
+        );
+        assert!(!a.join(OLD_IDENTIFIER).exists());
+        assert!(b.join(OLD_IDENTIFIER).exists() && b.join(IDENTIFIER).exists());
+    }
 }

@@ -142,7 +142,7 @@ pub fn candidates(tree: &ScanTree, min_size: u64) -> Candidates {
 pub fn find(c: Candidates, opts: &Options) -> Result<Report, DupesError> {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(opts.threads.max(1))
-        .thread_name(|i| format!("diskmap-dupes-{i}"))
+        .thread_name(|i| format!("bytescape-dupes-{i}"))
         .start_handler(|_| background_priority())
         .build()
         .expect("failed to start duplicate-finder threads");

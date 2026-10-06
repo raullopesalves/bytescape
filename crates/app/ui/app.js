@@ -115,7 +115,7 @@ listen('scan-error', (e) => {
   const cancelled = e.payload === 'scan cancelled';
   setStatus(cancelled ? 'Scan cancelled.' : `Scan failed: ${e.payload}`, !cancelled);
   $('empty').querySelector('h1').textContent = 'See what takes up space';
-  $('empty').querySelector('p').textContent = 'Pick a folder or a whole drive. diskmap scans it and groups everything by category.';
+  $('empty').querySelector('p').textContent = 'Pick a folder or a whole drive. Bytescape scans it and groups everything by category.';
   setStartIdle(true);
   showStart();
 });
@@ -1162,10 +1162,11 @@ async function doExport(format, t) {
 // Per-viewer settings that survive restarts. Storage may be unavailable.
 const store = {
   get(k) {
-    try { return localStorage.getItem(`diskmap.${k}`); } catch { return null; }
+    // Settings saved before the rename used the "diskmap." prefix.
+    try { return localStorage.getItem(`bytescape.${k}`) ?? localStorage.getItem(`diskmap.${k}`); } catch { return null; }
   },
   set(k, v) {
-    try { localStorage.setItem(`diskmap.${k}`, String(v)); } catch { /* not saved */ }
+    try { localStorage.setItem(`bytescape.${k}`, String(v)); } catch { /* not saved */ }
   },
 };
 

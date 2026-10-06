@@ -1,4 +1,4 @@
-//! diskmap-cli: scan a folder and print where the space went.
+//! bytescape-cli: scan a folder and print where the space went.
 
 use std::fs::File;
 use std::io::{self, BufWriter, IsTerminal, Write};
@@ -15,7 +15,7 @@ use scanner::{flags, scan, NodeId, NodeKind, Progress, ScanMethod, ScanOptions, 
 
 #[derive(Parser)]
 #[command(
-    name = "diskmap-cli",
+    name = "bytescape-cli",
     version,
     about = "Scan a folder and show what takes up space"
 )]

@@ -1,4 +1,4 @@
-# Default diskmap categories.
+# Default Bytescape categories.
 #
 # Each [[category]] has an id, a display name, a colour name for the UI, a
 # cleanup hint, and rules:

@@ -11,13 +11,13 @@
     {
       "label": "scan C:\\Windows",
       "type": "shell",
-      "command": "cargo run --release -p diskmap-cli -- C:\\Windows",
+      "command": "cargo run --release -p bytescape-cli -- C:\\Windows",
       "problemMatcher": ["$rustc"]
     },
     {
       "label": "scan a folder",
       "type": "shell",
-      "command": "cargo run --release -p diskmap-cli -- ${input:folder}",
+      "command": "cargo run --release -p bytescape-cli -- ${input:folder}",
       "problemMatcher": ["$rustc"]
     }
   ],

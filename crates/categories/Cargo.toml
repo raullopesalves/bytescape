@@ -1,15 +1,15 @@
 [package]
-name = "diskmap-categories"
+name = "bytescape-categories"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Rule-based file categories (games, videos, caches, ...) for diskmap scan trees"
+description = "Rule-based file categories (games, videos, caches, ...) for Bytescape scan trees"
 
 [lib]
 name = "categories"
 
 [dependencies]
-diskmap-scanner = { path = "../scanner" }
+bytescape-scanner = { path = "../scanner" }
 globset = "0.4.20"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"

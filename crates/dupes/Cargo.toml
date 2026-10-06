@@ -1,16 +1,16 @@
 [package]
-name = "diskmap-dupes"
+name = "bytescape-dupes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Duplicate file finder for diskmap scan trees"
+description = "Duplicate file finder for Bytescape scan trees"
 
 [lib]
 name = "dupes"
 
 [dependencies]
 blake3 = "1.8.7"
-diskmap-scanner = { path = "../scanner" }
+bytescape-scanner = { path = "../scanner" }
 rayon = "1"
 
 [target.'cfg(windows)'.dependencies]

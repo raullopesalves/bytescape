@@ -1,8 +1,8 @@
 # Third-party licenses
 
-Every crate diskmap depends on (on any platform), grouped by its declared
+Every crate Bytescape depends on (on any platform), grouped by its declared
 license, from `cargo metadata`. All are compatible with distributing
-diskmap under MIT OR Apache-2.0. Where a crate offers a choice, the
+Bytescape under MIT OR Apache-2.0. Where a crate offers a choice, the
 permissive option applies (MIT or Apache-2.0).
 
 Notes:

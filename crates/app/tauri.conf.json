@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "diskmap",
+  "productName": "Bytescape",
   "version": "0.1.0",
-  "identifier": "dev.diskmap.desktop",
+  "identifier": "io.github.raullopesalves.bytescape",
   "build": {
     "frontendDist": "ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "diskmap",
+        "title": "Bytescape",
         "width": 1280,
         "height": 820,
         "minWidth": 720,

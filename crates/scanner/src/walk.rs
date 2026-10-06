@@ -70,7 +70,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
         .num_threads(opts.threads.unwrap_or(0))
         // Deep folder trees recurse; give workers room.
         .stack_size(16 * 1024 * 1024)
-        .thread_name(|i| format!("diskmap-scan-{i}"))
+        .thread_name(|i| format!("bytescape-scan-{i}"))
         .build()
         .expect("failed to start scan threads");
 

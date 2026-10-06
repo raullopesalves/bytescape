@@ -531,7 +531,7 @@ mod tests {
         assert!(!r.join("file.txt").exists());
     }
 
-    /// Run by hand (`cargo test -p diskmap-app -- --ignored`): it puts a small
+    /// Run by hand (`cargo test -p bytescape-app -- --ignored`): it puts a small
     /// test folder in the Recycle Bin.
     #[test]
     #[ignore]
@@ -539,17 +539,23 @@ mod tests {
     fn recycle_bin_delete_leaves_link_targets_alone() {
         let dir = tempfile::tempdir().unwrap();
         let r = dir.path();
-        fs::create_dir_all(r.join("diskmap-recycle-test")).unwrap();
+        fs::create_dir_all(r.join("bytescape-recycle-test")).unwrap();
         fs::create_dir_all(r.join("target")).unwrap();
-        fs::write(r.join("diskmap-recycle-test/a.bin"), vec![1u8; 10]).unwrap();
+        fs::write(r.join("bytescape-recycle-test/a.bin"), vec![1u8; 10]).unwrap();
         fs::write(r.join("target/keep.txt"), b"keep").unwrap();
         make_dir_link(
-            &r.join("diskmap-recycle-test").join("link"),
+            &r.join("bytescape-recycle-test").join("link"),
             &r.join("target"),
         );
 
-        delete(&r.join("diskmap-recycle-test"), true, Method::RecycleBin, 0).unwrap();
-        assert!(!r.join("diskmap-recycle-test").exists());
+        delete(
+            &r.join("bytescape-recycle-test"),
+            true,
+            Method::RecycleBin,
+            0,
+        )
+        .unwrap();
+        assert!(!r.join("bytescape-recycle-test").exists());
         assert_eq!(fs::read(r.join("target/keep.txt")).unwrap(), b"keep");
     }
 

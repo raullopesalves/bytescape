@@ -285,6 +285,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytescape-app"
+version = "0.1.0"
+dependencies = [
+ "bytescape-categories",
+ "bytescape-dupes",
+ "bytescape-history",
+ "bytescape-scanner",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-window-state",
+ "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "bytescape-categories"
+version = "0.1.0"
+dependencies = [
+ "bytescape-scanner",
+ "globset",
+ "serde",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "bytescape-cli"
+version = "0.1.0"
+dependencies = [
+ "bytescape-categories",
+ "bytescape-scanner",
+ "clap",
+]
+
+[[package]]
+name = "bytescape-dupes"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "bytescape-scanner",
+ "rayon",
+ "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "bytescape-history"
+version = "0.1.0"
+dependencies = [
+ "bytescape-scanner",
+ "rusqlite",
+ "tempfile",
+]
+
+[[package]]
+name = "bytescape-scanner"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "cairo-rs"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -754,74 +822,6 @@ dependencies = [
  "option-ext",
  "redox_users",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "diskmap-app"
-version = "0.1.0"
-dependencies = [
- "diskmap-categories",
- "diskmap-dupes",
- "diskmap-history",
- "diskmap-scanner",
- "rayon",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-window-state",
- "tempfile",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "diskmap-categories"
-version = "0.1.0"
-dependencies = [
- "diskmap-scanner",
- "globset",
- "serde",
- "tempfile",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "diskmap-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "diskmap-categories",
- "diskmap-scanner",
-]
-
-[[package]]
-name = "diskmap-dupes"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "diskmap-scanner",
- "rayon",
- "tempfile",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "diskmap-history"
-version = "0.1.0"
-dependencies = [
- "diskmap-scanner",
- "rusqlite",
- "tempfile",
-]
-
-[[package]]
-name = "diskmap-scanner"
-version = "0.1.0"
-dependencies = [
- "rayon",
- "tempfile",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

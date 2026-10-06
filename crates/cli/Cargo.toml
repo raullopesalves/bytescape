@@ -1,15 +1,15 @@
 [package]
-name = "diskmap-cli"
+name = "bytescape-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command-line front end for the diskmap scanner"
+description = "Command-line front end for the Bytescape scanner"
 
 [[bin]]
-name = "diskmap-cli"
+name = "bytescape-cli"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
-diskmap-categories = { path = "../categories" }
-diskmap-scanner = { path = "../scanner" }
+bytescape-categories = { path = "../categories" }
+bytescape-scanner = { path = "../scanner" }

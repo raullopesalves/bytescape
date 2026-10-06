@@ -1,22 +1,22 @@
 [package]
-name = "diskmap-app"
+name = "bytescape-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Desktop app for diskmap: scan a drive and browse what takes up space"
+description = "Bytescape desktop app: scan a drive and browse what takes up space"
 
 [[bin]]
-name = "diskmap"
+name = "bytescape"
 path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-diskmap-categories = { path = "../categories" }
-diskmap-dupes = { path = "../dupes" }
-diskmap-history = { path = "../history" }
-diskmap-scanner = { path = "../scanner" }
+bytescape-categories = { path = "../categories" }
+bytescape-dupes = { path = "../dupes" }
+bytescape-history = { path = "../history" }
+bytescape-scanner = { path = "../scanner" }
 rayon = "1.12.0"
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2.12.1", features = [] }

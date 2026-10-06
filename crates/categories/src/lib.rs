@@ -1,4 +1,4 @@
-//! File categories (games, videos, caches, ...) for diskmap scan trees.
+//! File categories (games, videos, caches, ...) for Bytescape scan trees.
 //!
 //! Categories and their rules come from TOML: the built-in
 //! [`DEFAULT_RULES`], then optionally a user rules file loaded after it.
