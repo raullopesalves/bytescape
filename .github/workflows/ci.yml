@@ -13,7 +13,7 @@ jobs:
     name: Test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         run: |
@@ -23,7 +23,7 @@ jobs:
       # Build scripts (Tauri's) keep absolute paths in target, so the key
       # names the repository: after a rename the checkout path changes.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry

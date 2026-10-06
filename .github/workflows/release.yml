@@ -19,7 +19,7 @@ jobs:
     env:
       TAURI_CLI_VERSION: 2.12.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the tag matches the version
         run: |
@@ -37,7 +37,7 @@ jobs:
           rustup default stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -48,7 +48,7 @@ jobs:
 
       - name: Cache the Tauri CLI
         id: tauri-cli
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: ${{ runner.os }}-tauri-cli-${{ env.TAURI_CLI_VERSION }}
