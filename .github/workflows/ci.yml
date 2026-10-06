@@ -42,3 +42,11 @@ jobs:
       # runner's Recycle Bin. Everything else uses temporary folders.
       - name: Test
         run: cargo test --locked
+
+      # The real UI with a mocked Rust side, in headless Edge (on the runner).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: UI tests
+        run: node crates/app/ui-test/run.mjs
