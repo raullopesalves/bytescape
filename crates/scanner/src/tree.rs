@@ -1,6 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::hash_map::Entry;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -257,24 +256,25 @@ impl ScanTree {
     ///
     /// Children always have larger ids than their parent, so walking the
     /// arena backwards finishes every subtree before its parent is read.
-    pub(crate) fn compute_totals(&mut self, link_keys: &[(NodeId, FileKey)]) {
+    pub(crate) fn compute_totals(&mut self, mut link_keys: Vec<(NodeId, FileKey)>) {
         // Files sharing a key are one physical file. The first in id order
-        // counts; the others are marked as duplicates.
-        let mut first: HashMap<FileKey, NodeId> = HashMap::with_capacity(link_keys.len());
-        let mut sorted = link_keys.to_vec();
-        sorted.sort_unstable_by_key(|(id, _)| *id);
-        for (id, key) in sorted {
-            match first.entry(key) {
-                Entry::Vacant(v) => {
-                    v.insert(id);
-                }
-                Entry::Occupied(o) => {
-                    self.nodes[*o.get() as usize].flags |= flags::HARDLINKED;
-                    let n = &mut self.nodes[id as usize];
-                    n.flags |= flags::HARDLINKED | flags::HARDLINK_DUP;
-                }
+        // counts; the others are marked as duplicates. Sorting by (key, id)
+        // puts each file's links side by side, lowest id first, so no map
+        // is needed (there can be a key for every file).
+        link_keys.sort_unstable_by_key(|&(id, key)| (key, id));
+        for links in link_keys.chunk_by(|a, b| a.1 == b.1) {
+            let [(first, _), rest @ ..] = links else {
+                continue;
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            self.nodes[*first as usize].flags |= flags::HARDLINKED;
+            for (id, _) in rest {
+                self.nodes[*id as usize].flags |= flags::HARDLINKED | flags::HARDLINK_DUP;
             }
         }
+        drop(link_keys);
 
         let mut stats = ScanStats {
             elapsed: self.stats.elapsed,

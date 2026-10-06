@@ -694,7 +694,7 @@ mod windows {
                             node.flags |= flags::SPARSE;
                         }
                         if name_count[child as usize] > 1 {
-                            link_keys.push((cid, FileKey(serial, child.into())));
+                            link_keys.push((cid, FileKey::new(serial, child.into())));
                         }
                     }
                     NodeKind::Dir if !seen[child as usize] => {
@@ -714,7 +714,7 @@ mod windows {
             errors: Vec::new(),
             stats: ScanStats::default(),
         };
-        tree.compute_totals(&link_keys);
+        tree.compute_totals(link_keys);
         Ok(tree)
     }
 }

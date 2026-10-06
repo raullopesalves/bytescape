@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -43,6 +43,9 @@ impl Raw {
 struct Ctx<'a> {
     opts: &'a ScanOptions,
     vol: VolumeInfo,
+    /// Entries and hardlink keys seen, so the flat arrays can be sized once.
+    entries: AtomicUsize,
+    keys: AtomicUsize,
 }
 
 impl Ctx<'_> {
@@ -104,6 +107,8 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
     let ctx = Ctx {
         opts,
         vol: fsinfo::volume_info(root),
+        entries: AtomicUsize::new(0),
+        keys: AtomicUsize::new(0),
     };
     let mut raw_root = Raw::new(root.to_string_lossy().into(), NodeKind::Dir);
     raw_root.modified = fsinfo::modified_secs(&md);
@@ -113,9 +118,10 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanTree, ScanError> {
         return Err(ScanError::Cancelled);
     }
 
-    let mut tree = flatten(raw_root)?;
+    let sizes = (ctx.entries.into_inner() + 1, ctx.keys.into_inner());
+    let mut tree = flatten(raw_root, sizes)?;
     let keys = std::mem::take(&mut tree.link_keys);
-    tree.tree.compute_totals(&keys);
+    tree.tree.compute_totals(keys);
     tree.tree.stats.elapsed = start.elapsed();
     tree.tree.stats.method = ScanMethod::Walk;
     tree.tree.stats.mft_skipped = mft_skipped;
@@ -156,6 +162,10 @@ fn walk_dir(path: &Path, dir: &mut Raw, ctx: &Ctx) {
     let mut new_files = 0u64;
     let mut new_bytes = 0u64;
 
+    ctx.entries
+        .fetch_add(listing.entries.len(), Ordering::Relaxed);
+    let keys = listing.entries.iter().filter(|e| e.key.is_some()).count();
+    ctx.keys.fetch_add(keys, Ordering::Relaxed);
     for e in listing.entries {
         let mut r = Raw::new(e.name, e.kind);
         r.size = e.size;
@@ -197,10 +207,12 @@ struct Flat {
 }
 
 /// Breadth-first copy into the arena so each folder's children are contiguous.
-fn flatten(root: Raw) -> Result<Flat, ScanError> {
-    let mut nodes: Vec<Node> = Vec::new();
+/// `sizes` is (nodes, hardlink keys), counted during the walk: sizing the
+/// arrays once avoids the copy (and twice the memory) of growing them.
+fn flatten(root: Raw, sizes: (usize, usize)) -> Result<Flat, ScanError> {
+    let mut nodes: Vec<Node> = Vec::with_capacity(sizes.0);
     let mut errors = Vec::new();
-    let mut link_keys = Vec::new();
+    let mut link_keys = Vec::with_capacity(sizes.1);
 
     let mut queue: VecDeque<(Raw, NodeId)> = VecDeque::new();
     let mut root = root;

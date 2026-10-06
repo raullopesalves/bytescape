@@ -17,8 +17,16 @@ use std::time::UNIX_EPOCH;
 use crate::tree::NodeKind;
 
 /// Identifies one physical file across all its hardlinks: (volume, file id).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FileKey(pub u64, pub u128);
+/// The 128-bit id is kept as two `u64` halves: a `u128` would make the key
+/// 16-byte aligned and 32 bytes instead of 24, and there is one per file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FileKey(pub u64, pub [u64; 2]);
+
+impl FileKey {
+    pub fn new(volume: u64, id: u128) -> Self {
+        FileKey(volume, [(id >> 64) as u64, id as u64])
+    }
+}
 
 /// Per-scan facts about the volume being scanned.
 #[derive(Clone, Copy, Debug)]
@@ -171,7 +179,7 @@ mod imp {
         list_dir_std(path, |_, md, e| {
             e.alloc = md.blocks() * 512;
             if hardlinks && md.nlink() > 1 {
-                e.key = Some(FileKey(md.dev(), md.ino().into()));
+                e.key = Some(FileKey::new(md.dev(), md.ino().into()));
             }
             // Far fewer blocks than its length means a sparse file.
             if md.len() > 0 && e.alloc + 4096 < md.len() {
@@ -436,7 +444,7 @@ pub(crate) mod imp {
                 let id = u128::from_le_bytes(info.FileId.Identifier);
                 if hardlinks && id != 0 && fl & flags::CLOUD_PLACEHOLDER == 0 {
                     if let Some(serial) = vol.serial {
-                        e.key = Some(FileKey(serial, id));
+                        e.key = Some(FileKey::new(serial, id));
                     }
                 }
             }
@@ -525,7 +533,7 @@ pub(crate) mod imp {
         }
         let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
         Some((
-            FileKey(info.dwVolumeSerialNumber as u64, index.into()),
+            FileKey::new(info.dwVolumeSerialNumber as u64, index.into()),
             info.nNumberOfLinks,
         ))
     }
