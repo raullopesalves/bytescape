@@ -21,6 +21,11 @@ const categories = [
   { id: 2, key: 'caches', name: 'Caches and temp', color: 'lime', cleanup: 'safe', files: 1, size: 1000, alloc: 1000 },
 ];
 const handlers = {};
+const mockHistory = [
+  { id: 3, taken: 1791300000, size: 1800 },
+  { id: 2, taken: 1790700000, size: 1500 },
+  { id: 1, taken: 1789000000, size: 900 },
+];
 
 // Search: name substring, extensions, min size and category, like src/search.rs.
 let searchState = null; // { generation, ids, marks }
@@ -185,6 +190,25 @@ window.__TAURI__ = {
         case 'delete_basket': return deleteBasket(args);
         case 'cancel_scan': return null;
         case 'relaunch_elevated': throw new Error('Not started: administrator rights were not given.');
+        // History: this scan plus two older ones of X:\demo.
+        case 'history_list': return {
+          available: true, bytes: 48 * 1024, totalScans: mockHistory.length,
+          scans: mockHistory.map((h, k) => ({ id: h.id, taken: h.taken, method: 'walk', size: h.size, files: 7, current: k === 0 })),
+        };
+        case 'history_compare': {
+          const h = mockHistory.find((x) => x.id === args.id);
+          if (!h) throw new Error('That scan is no longer in the history.');
+          return {
+            taken: h.taken, oldTotal: h.size, newTotal: byId.get(0).size, threshold: 100, millis: 0,
+            changes: [
+              { path: 'X:\\demo\\big.bin-folder', name: 'b', node: 2, old: 100, new: 500, wasMissing: false },
+              { path: 'X:\\demo\\old-stuff', name: 'old-stuff', node: null, old: 300, new: 0, wasMissing: false },
+              { path: 'X:\\demo\\a', name: 'a', node: 1, old: 0, new: 300, wasMissing: true },
+            ],
+            categories: [{ key: 'documents', name: 'Documents', old: 100, new: 300 }],
+          };
+        }
+        case 'history_clear': mockHistory.splice(1); return null;
         // Overview: "big.bin" (Caches, safe) is the one suggestion.
         case 'overview': {
           const d = (id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, x]) => x).join('\\') });

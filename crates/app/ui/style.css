@@ -381,6 +381,18 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .ov-list .o-size { font-variant-numeric: tabular-nums; text-align: right; }
 .ov-list .o-path { grid-column: 1 / -1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov-cats li { grid-template-columns: auto 1fr auto; align-items: center; }
+.ov-list li.on { background: var(--select); }
+.ov-list li.current { cursor: default; }
+.ov-list li.current:hover { background: none; }
+.ov-list li.on.current:hover { background: var(--select); }
+.grew { color: var(--warn); }
+.shrank { color: var(--safe); }
+.hist-changes .o-name, .hist-changes .o-path { color: var(--text); }
+.hist-changes .o-path { color: var(--muted); }
+.hist-changes .cat-bar { grid-column: 1 / -1; margin: 3px 0 0; }
+.hist-changes li.grew .cat-bar span { background: var(--warn); }
+.hist-changes li.shrank .cat-bar span { background: var(--safe); }
+.hist-compare { flex-basis: 420px; flex-grow: 2; }
 .ov-cats .cat-bar { grid-column: 2 / -1; margin: 3px 0 0; }
 
 /* Start screen drives */

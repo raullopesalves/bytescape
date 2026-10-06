@@ -1,0 +1,16 @@
+[package]
+name = "diskmap-history"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scan history for diskmap: snapshots in SQLite and what-grew comparisons"
+
+[lib]
+name = "history"
+
+[dependencies]
+diskmap-scanner = { path = "../scanner" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

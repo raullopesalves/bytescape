@@ -11,6 +11,7 @@ mod basket;
 mod drives;
 mod elevation;
 mod export;
+mod scan_history;
 mod search;
 mod treemap;
 
@@ -47,6 +48,8 @@ struct Session {
     /// Bumped by every search, so the UI can't page through a stale one.
     generation: u64,
     basket: Basket,
+    /// This scan's snapshot in the history, once saved.
+    history_id: Option<i64>,
 }
 
 struct SearchState {
@@ -59,6 +62,8 @@ struct AppState {
     session: Mutex<Option<Session>>,
     /// The running scan's cancel flag; `None` when no scan is running.
     scanning: Mutex<Option<Arc<AtomicBool>>>,
+    /// Scan history; `None` if the database couldn't be opened.
+    history: Mutex<Option<history::History>>,
 }
 
 /// One node as the UI sees it.
@@ -884,6 +889,7 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
             search: None,
             generation: 0,
             basket: Basket::default(),
+            history_id: None,
         }
     });
     let event = match outcome {
@@ -894,10 +900,16 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
         Err(e) => Err(e.to_string()),
     };
     *state.scanning.lock().unwrap() = None;
-    let _ = match event {
-        Ok(()) => app.emit("scan-done", ()),
-        Err(e) => app.emit("scan-error", e),
-    };
+    match event {
+        Ok(()) => {
+            let _ = app.emit("scan-done", ());
+            // After the results are on screen.
+            scan_history::save_current(&app);
+        }
+        Err(e) => {
+            let _ = app.emit("scan-error", e);
+        }
+    }
 }
 
 /// The built-in rules plus the user's rules file, if there is one. A broken
@@ -941,6 +953,7 @@ fn main() {
     }
     tauri::Builder::default()
         .setup(move |app| {
+            *app.state::<AppState>().history.lock().unwrap() = scan_history::open(app.handle());
             if elevated {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.set_title("diskmap (administrator)");
@@ -976,6 +989,9 @@ fn main() {
             export,
             drives,
             relaunch_elevated,
+            scan_history::history_list,
+            scan_history::history_compare,
+            scan_history::history_clear,
             reveal
         ])
         .run(tauri::generate_context!())

@@ -129,6 +129,7 @@ async function loadResult() {
   visible = [{ row: root, depth: 0, parentSize: root.size }];
   selected = 0;
   search = null;
+  histCompare = null;
   basket = EMPTY_BASKET;
   basketIds = new Set();
   renderBasket();
@@ -727,11 +728,13 @@ function setView(v) {
   const prev = view;
   if (prev === 'tree' && v !== 'tree') treeScroll = $('scroller').scrollTop;
   view = v;
-  const ov = v === 'overview';
-  $('overview').hidden = !ov;
-  $('thead').hidden = ov;
-  $('scroller').hidden = ov;
-  if (prev !== v && !ov) $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
+  // Overview and History are panels; Tree and Results are the list.
+  const panel = v === 'overview' || v === 'history';
+  $('overview').hidden = v !== 'overview';
+  $('history').hidden = v !== 'history';
+  $('thead').hidden = panel;
+  $('scroller').hidden = panel;
+  if (prev !== v && !panel) $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
   for (const b of $('viewbar').querySelectorAll('[data-view]')) {
     b.classList.toggle('on', b.dataset.view === v);
     b.setAttribute('aria-selected', String(b.dataset.view === v));
@@ -739,7 +742,8 @@ function setView(v) {
   $('viewbar').querySelector('[data-view=results]').hidden = !search;
   $('thead').classList.toggle('results', v === 'results');
   $('thead').children[2].textContent = v === 'results' ? '% of all' : '% of parent';
-  if (ov) renderOverview();
+  if (v === 'overview') renderOverview();
+  else if (v === 'history') renderHistory();
   else render();
   drawOverlay();
 }
@@ -1184,6 +1188,82 @@ function setStartIdle(idle) {
   $('last-scan').hidden = !idle || !store.get('lastPath');
 }
 
+// ---------- scan history ----------
+
+let histCompare = null; // id of the past scan being compared with
+
+const signed = (n) => `${n > 0 ? '+' : n < 0 ? '−' : '±'}${human(Math.abs(n))}`;
+const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+async function renderHistory() {
+  const el = $('history');
+  let list;
+  try {
+    list = await invoke('history_list');
+  } catch (e) {
+    el.textContent = String(e);
+    return;
+  }
+  if (view !== 'history') return;
+  if (!list.available) {
+    el.innerHTML = '<p class="note">Scan history is not available: its database could not be opened.</p>';
+    return;
+  }
+  const now = summary.root.size;
+  const past = list.scans.filter((s) => !s.current);
+  if (past.length && !past.some((p) => p.id === histCompare)) histCompare = past[0].id;
+
+  const scans = list.scans.map((s) => `<li data-scan="${s.id}" class="${s.current ? 'current' : ''}${s.id === histCompare ? ' on' : ''}">
+      <span class="o-name">${when(s.taken)}${s.current ? ' · this scan' : ''}</span>
+      <span class="o-size">${human(s.size)}</span>
+      <span class="o-path">${plural(s.files, 'file')} · ${s.method === 'mft' ? 'file table' : 'folder by folder'}${s.current ? '' : ` · ${signed(now - s.size)} since`}</span>
+    </li>`).join('');
+
+  let compare = '<p class="note">This is the first scan of this folder in the history. Scan it again later to see what changed.</p>';
+  if (past.length) {
+    let c;
+    try {
+      c = await invoke('history_compare', { id: histCompare });
+    } catch (e) {
+      c = null;
+      compare = `<p class="note">${esc(String(e))}</p>`;
+    }
+    if (view !== 'history') return;
+    if (c) compare = comparisonHtml(c);
+  }
+
+  el.innerHTML = `<div class="ov-grid">
+      <section class="ov-card"><h3>Scans of this folder</h3><ul class="ov-list hist-scans">${scans}</ul>
+        <p class="note">History takes ${human(list.bytes)} for ${plural(list.totalScans, 'scan')} of all folders.
+          <button class="link" id="hist-clear">Clear history</button></p></section>
+      <section class="ov-card hist-compare">${compare}</section>
+    </div>`;
+}
+
+function comparisonHtml(c) {
+  const total = c.newTotal - c.oldTotal;
+  const biggest = Math.max(1, ...c.changes.map((x) => Math.abs(x.new - x.old)));
+  const rows = c.changes.map((x) => {
+    const d = x.new - x.old;
+    const cls = d >= 0 ? 'grew' : 'shrank';
+    const tag = x.wasMissing
+      ? `<span class="tag" title="New, or under ${human(c.threshold)} last time">new</span>`
+      : x.node === null ? '<span class="tag">gone</span>' : '';
+    return `<li class="${cls}"${x.node !== null ? ` data-node="${x.node}"` : ''} title="${esc(x.path)}">
+        <span class="o-name">${esc(x.name)}${tag}</span><span class="o-size delta">${signed(d)}</span>
+        <span class="o-path">${esc(x.path)} · ${human(x.old)} → ${human(x.new)}</span>
+        <div class="cat-bar"><span style="width:${(Math.abs(d) * 100) / biggest}%"></span></div>
+      </li>`;
+  }).join('') || `<li class="current"><span class="o-name">No folder changed by ${human(c.threshold)} or more.</span></li>`;
+  const cats = c.categories.map((x) => `<li class="${x.new >= x.old ? 'grew' : 'shrank'} current">
+      <span class="o-name">${esc(x.name)}</span><span class="o-size delta">${signed(x.new - x.old)}</span>
+      <span class="o-path">${human(x.old)} → ${human(x.new)}</span></li>`).join('');
+  return `<h3>Since ${when(c.taken)}: <span class="${total >= 0 ? 'grew' : 'shrank'}">${signed(total)}</span></h3>
+    <p class="note">${human(c.oldTotal)} then, ${human(c.newTotal)} now. Folders that changed most; changes under ${human(c.threshold)} aren't listed.</p>
+    <ul class="ov-list hist-changes">${rows}</ul>
+    ${cats ? `<h3>By category</h3><ul class="ov-list">${cats}</ul>` : ''}`;
+}
+
 // ---------- wiring ----------
 
 $('pick').addEventListener('click', pick);
@@ -1393,6 +1473,34 @@ $('export').addEventListener('click', (e) => {
     [`Export ${t.what} as CSV…`, () => doExport('csv', t)],
     [`Export ${t.what} as JSON…`, () => doExport('json', t)],
   ]);
+});
+$('history').addEventListener('click', (e) => {
+  if (e.target.closest('#hist-clear')) {
+    modal('Clear scan history?', '<p>This deletes the saved snapshots of every folder. Your files are not touched.</p>', [
+      ['Cancel', '', closeModal],
+      ['Clear history', 'danger-btn', async () => {
+        closeModal();
+        await invoke('history_clear');
+        histCompare = null;
+        renderHistory();
+      }],
+    ]);
+    return;
+  }
+  const scan = e.target.closest('li[data-scan]:not(.current)')?.dataset.scan;
+  if (scan !== undefined) {
+    histCompare = Number(scan);
+    renderHistory();
+    return;
+  }
+  const node = e.target.closest('li[data-node]')?.dataset.node;
+  if (node !== undefined) {
+    setView('tree');
+    revealInTree(Number(node)).then(() => $('scroller').focus());
+  }
+});
+listen('history-saved', () => {
+  if (view === 'history') renderHistory();
 });
 $('drives').addEventListener('click', (e) => {
   const path = e.target.closest('[data-path]')?.dataset.path;
