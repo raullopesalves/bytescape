@@ -21,6 +21,7 @@ const categories = [
   { id: 2, key: 'caches', name: 'Caches and temp', color: 'lime', cleanup: 'safe', files: 1, size: 1000, alloc: 1000 },
 ];
 const handlers = {};
+let dupesDone = false;
 const mockHistory = [
   { id: 3, taken: 1791300000, size: 1800 },
   { id: 2, taken: 1790700000, size: 1500 },
@@ -209,6 +210,19 @@ window.__TAURI__ = {
           };
         }
         case 'history_clear': mockHistory.splice(1); return null;
+        // Duplicates: a2.txt and deep.txt are copies (a2.txt is older).
+        case 'dupes_start':
+          setTimeout(() => handlers['dupes-progress']?.({ payload: { stage: 2, filesDone: 1, filesTotal: 2, bytesRead: 300, elapsedMs: 10 } }), 10);
+          setTimeout(() => { dupesDone = true; handlers['dupes-done']?.({ payload: { cancelled: false } }); }, 60);
+          return null;
+        case 'dupes_view': {
+          if (!dupesDone) return { done: false, groups: [], totalGroups: 0, totalWasted: 0 };
+          const file = (id, modified) => ({ id, name: byId.get(id).name, path: chain(id).map(([, x]) => x).join('\\'), modified, category: null });
+          const files = [11, 14].filter((id) => byId.has(id)).map((id) => file(id, id === 11 ? 1780000000 : 1790000000));
+          const groups = files.length > 1 ? [{ size: 150, wasted: 150, files }] : [];
+          return { done: true, groups, totalGroups: groups.length, totalWasted: groups.length ? 150 : 0, candidates: 7,
+            candidateBytes: 1800, bytesRead: 300, changed: 0, unreadable: 0, millis: 50, minSize: args?.minSize ?? 1048576 };
+        }
         // Overview: "big.bin" (Caches, safe) is the one suggestion.
         case 'overview': {
           const d = (id) => ({ row: structuredClone(byId.get(id)), path: chain(id).map(([, x]) => x).join('\\') });

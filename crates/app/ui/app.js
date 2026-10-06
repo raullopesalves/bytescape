@@ -130,6 +130,9 @@ async function loadResult() {
   selected = 0;
   search = null;
   histCompare = null;
+  dupesKeep = new Map();
+  dupesShown = 100;
+  $('dupes').innerHTML = '';
   basket = EMPTY_BASKET;
   basketIds = new Set();
   renderBasket();
@@ -728,10 +731,11 @@ function setView(v) {
   const prev = view;
   if (prev === 'tree' && v !== 'tree') treeScroll = $('scroller').scrollTop;
   view = v;
-  // Overview and History are panels; Tree and Results are the list.
-  const panel = v === 'overview' || v === 'history';
+  // Overview, History and Duplicates are panels; Tree and Results are the list.
+  const panel = v === 'overview' || v === 'history' || v === 'dupes';
   $('overview').hidden = v !== 'overview';
   $('history').hidden = v !== 'history';
+  $('dupes').hidden = v !== 'dupes';
   $('thead').hidden = panel;
   $('scroller').hidden = panel;
   if (prev !== v && !panel) $('scroller').scrollTop = v === 'tree' ? treeScroll : 0;
@@ -744,6 +748,7 @@ function setView(v) {
   $('thead').children[2].textContent = v === 'results' ? '% of all' : '% of parent';
   if (v === 'overview') renderOverview();
   else if (v === 'history') renderHistory();
+  else if (v === 'dupes') renderDupes();
   else render();
   drawOverlay();
 }
@@ -1090,6 +1095,7 @@ async function refreshAfterDelete() {
   setBasket(await invoke('basket_view'));
   if (search) await applyFilters();
   else await layoutMap();
+  if (view === 'dupes') renderDupes();
   if (view === 'tree') select(selected);
 }
 
@@ -1263,6 +1269,122 @@ function comparisonHtml(c) {
     <ul class="ov-list hist-changes">${rows}</ul>
     ${cats ? `<h3>By category</h3><ul class="ov-list">${cats}</ul>` : ''}`;
 }
+
+// ---------- duplicate files ----------
+
+let dupesRunning = false;
+let dupesShown = 100;          // groups listed; "Show more" adds to it
+let dupesKeep = new Map();     // group key -> id of the copy to keep
+let dupesMin = 1048576;
+
+const groupKey = (g) => g.files.map((f) => f.id).sort((a, b) => a - b).join(',');
+
+/** The copy to keep: the user's choice, else the oldest (likely the original). */
+function keptCopy(g) {
+  const chosen = dupesKeep.get(groupKey(g));
+  if (chosen !== undefined && g.files.some((f) => f.id === chosen)) return chosen;
+  return [...g.files].sort((a, b) => a.modified - b.modified || a.id - b.id)[0].id;
+}
+
+async function renderDupes() {
+  const el = $('dupes');
+  if (dupesRunning) {
+    if (!$('dupes-progress')) {
+      el.innerHTML = `<div class="ov-grid"><section class="ov-card wide"><h3>Looking for duplicate files…</h3>
+        <p id="dupes-progress" class="note">Starting…</p>
+        <p class="note">Files are read in the background at low priority. The toolbar's Cancel stops the search.</p></section></div>`;
+    }
+    return;
+  }
+  let v;
+  try {
+    v = await invoke('dupes_view', { limit: dupesShown });
+  } catch (e) {
+    el.textContent = String(e);
+    return;
+  }
+  if (view !== 'dupes') return;
+  const sizes = [[102400, '100 KB'], [1048576, '1 MB'], [10485760, '10 MB'], [104857600, '100 MB']];
+  const picker = `<label class="note">Files of at least <select id="dupes-min">${sizes
+    .map(([b, t]) => `<option value="${b}"${b === dupesMin ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`;
+  if (!v.done) {
+    el.innerHTML = `<div class="ov-grid"><section class="ov-card wide"><h3>Duplicate files</h3>
+      <p class="note">Finds files with exactly the same contents. Only files that share a size are read, and mostly just
+        their first and last 16 KB. Online-only files are skipped, and links to the same file don't count as copies.</p>
+      <div class="dupes-start">${picker}<button class="primary" id="dupes-go">Find duplicates</button></div></section></div>`;
+    return;
+  }
+  const pct = v.candidateBytes ? ((v.bytesRead * 100) / v.candidateBytes).toFixed(1) : '0';
+  const skipped = v.changed + v.unreadable
+    ? ` ${plural(v.changed + v.unreadable, 'file')} changed or couldn't be read and ${v.changed + v.unreadable === 1 ? 'was' : 'were'} left out.` : '';
+  const groups = v.groups.map((g, gi) => {
+    const keep = keptCopy(g);
+    const rows = g.files.map((f) => `<label class="dup-file${f.id === keep ? ' keep' : ''}">
+        <input type="radio" name="keep-${gi}" value="${f.id}" data-key="${groupKey(g)}"${f.id === keep ? ' checked' : ''}>
+        <span class="o-name">${esc(f.name)}${basketIds.has(f.id) ? '<span class="tag basket">in basket</span>' : ''}</span>
+        <span class="dup-meta">${fmtDate(f.modified)}${f.category ? ` · ${esc(f.category)}` : ''}</span>
+        <button class="link dup-show" data-id="${f.id}" title="Show in the tree">${esc(f.path)}</button>
+      </label>`).join('');
+    return `<section class="dup-group" data-g="${gi}">
+        <div class="dup-head"><span>${g.files.length} copies of ${human(g.size)} · ${human(g.wasted)} wasted</span>
+          <button class="link" data-basket-group="${gi}">Put the other copies in the basket</button></div>${rows}</section>`;
+  }).join('');
+  el.innerHTML = `<div class="ov-grid"><section class="ov-card wide">
+      <h3>${v.totalGroups ? `${human(v.totalWasted)} in ${plural(v.totalGroups, 'group')} of identical files` : 'No duplicate files found'}</h3>
+      <p class="note">Checked ${plural(v.candidates, 'file')} of ${human(v.minSize)} or more (${human(v.candidateBytes)}),
+        reading ${human(v.bytesRead)} of them (${pct}%) in ${(v.millis / 1000).toFixed(1)} s.${skipped}</p>
+      <div class="dupes-start">${v.totalGroups ? '<button class="primary" id="dupes-basket-all">Put all extra copies in the basket</button>' : ''}
+        ${picker}<button id="dupes-go">Search again</button></div>
+      ${v.totalGroups ? '<p class="note">For each group the copy marked "keep" stays; the others go to the cleanup basket for review. Nothing is deleted here.</p>' : ''}
+      <div class="dup-groups">${groups}</div>
+      ${v.groups.length < v.totalGroups ? `<button id="dupes-more">Show more (${fmtInt(v.totalGroups - v.groups.length)} more groups)</button>` : ''}
+    </section></div>`;
+}
+
+async function startDupes() {
+  dupesMin = Number($('dupes-min')?.value || dupesMin);
+  try {
+    await invoke('dupes_start', { minSize: dupesMin });
+  } catch (e) {
+    setStatus(String(e), true);
+    return;
+  }
+  dupesRunning = true;
+  dupesShown = 100;
+  setScanning(true);
+  $('dupes').innerHTML = '';
+  renderDupes();
+}
+
+/** Puts every copy except the kept one of each group in the basket. */
+async function basketExtras(groups) {
+  const ids = groups.flatMap((g) => {
+    const keep = keptCopy(g);
+    return g.files.map((f) => f.id).filter((id) => id !== keep);
+  });
+  if (!ids.length) return;
+  setBasket(await invoke('basket_add', { ids }));
+  setStatus(`The cleanup basket now has ${plural(basket.items.length, 'item')}. Review it before deleting anything.`);
+  renderDupes();
+}
+
+listen('dupes-progress', (e) => {
+  const p = e.payload;
+  const el = $('dupes-progress');
+  if (!el) return;
+  const what = p.stage === 3 ? 'Comparing whole files' : 'Comparing the ends of files';
+  el.textContent = `${what}: ${fmtInt(p.filesDone)} of ${fmtInt(p.filesTotal)} · ${human(p.bytesRead)} read · ${(p.elapsedMs / 1000).toFixed(0)} s`;
+});
+
+listen('dupes-done', (e) => {
+  dupesRunning = false;
+  setScanning(false);
+  setStatus(e.payload.cancelled ? 'Duplicate search stopped.' : 'Duplicate search finished.');
+  if (view === 'dupes') {
+    $('dupes').innerHTML = '';
+    renderDupes();
+  }
+});
 
 // ---------- wiring ----------
 
@@ -1501,6 +1623,34 @@ $('history').addEventListener('click', (e) => {
 });
 listen('history-saved', () => {
   if (view === 'history') renderHistory();
+});
+$('dupes').addEventListener('click', async (e) => {
+  if (e.target.closest('#dupes-go')) return startDupes();
+  if (e.target.closest('#dupes-more')) {
+    dupesShown += 100;
+    return renderDupes();
+  }
+  if (e.target.closest('#dupes-basket-all')) {
+    const all = await invoke('dupes_view', { limit: 1e9 });
+    return basketExtras(all.groups);
+  }
+  const gi = e.target.closest('[data-basket-group]')?.dataset.basketGroup;
+  if (gi !== undefined) {
+    const v = await invoke('dupes_view', { limit: dupesShown });
+    return basketExtras([v.groups[Number(gi)]]);
+  }
+  const show = e.target.closest('.dup-show');
+  if (show) {
+    e.preventDefault();
+    setView('tree');
+    revealInTree(Number(show.dataset.id)).then(() => $('scroller').focus());
+  }
+});
+$('dupes').addEventListener('change', (e) => {
+  const r = e.target.closest('input[type=radio][data-key]');
+  if (!r) return;
+  dupesKeep.set(r.dataset.key, Number(r.value));
+  renderDupes();
 });
 $('drives').addEventListener('click', (e) => {
   const path = e.target.closest('[data-path]')?.dataset.path;

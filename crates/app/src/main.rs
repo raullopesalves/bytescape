@@ -9,6 +9,7 @@
 
 mod basket;
 mod drives;
+mod duplicates;
 mod elevation;
 mod export;
 mod scan_history;
@@ -50,6 +51,8 @@ struct Session {
     basket: Basket,
     /// This scan's snapshot in the history, once saved.
     history_id: Option<i64>,
+    /// The last duplicate search of this scan.
+    dupes: Option<duplicates::Found>,
 }
 
 struct SearchState {
@@ -890,6 +893,7 @@ fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
             generation: 0,
             basket: Basket::default(),
             history_id: None,
+            dupes: None,
         }
     });
     let event = match outcome {
@@ -992,6 +996,8 @@ fn main() {
             scan_history::history_list,
             scan_history::history_compare,
             scan_history::history_clear,
+            duplicates::dupes_start,
+            duplicates::dupes_view,
             reveal
         ])
         .run(tauri::generate_context!())
