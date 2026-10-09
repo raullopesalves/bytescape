@@ -4,7 +4,7 @@ A disk usage analyzer for Windows. It shows what takes up space on a drive or
 folder, groups everything into categories (games, videos, caches, developer
 dependencies, ...), and helps you clean up safely.
 
-![Overview after scanning C:\Windows](docs/screenshots/overview.png)
+![The overview of a scanned drive, with the category-coloured treemap](docs/screenshots/overview.png)
 
 ## Download
 
@@ -62,7 +62,17 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
   (`node_modules`, `D:\Backups`), and your own category rules.
 - **Export** a folder's contents or search results as CSV or JSON.
 
-![Tree and treemap](docs/screenshots/tree-and-treemap.png)
+![The folder tree next to the treemap](docs/screenshots/tree-and-treemap.png)
+
+![Search results grouped by folder, with the number of matches in each](docs/screenshots/search.png)
+
+![File types, largest first](docs/screenshots/file-types.png)
+
+![Duplicate files, with the copy to keep marked](docs/screenshots/duplicates.png)
+
+![The cleanup basket, opened big, before anything is deleted](docs/screenshots/basket.png)
+
+The screenshots show a small demo drive.
 
 ## Keyboard
 

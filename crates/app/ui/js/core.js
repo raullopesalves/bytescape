@@ -210,7 +210,8 @@ async function loadResult() {
   $('statusbar').hidden = false;
   $('scroller').scrollTop = 0;
   const how = summary.method === 'mft' ? "read from the drive's file table" : 'folder by folder';
-  setStatus(`Scanned in ${(summary.scanMs / 1000).toFixed(1)} s (${how}), categorised in ${summary.categoriseMs} ms`);
+  const took = summary.scanMs < 1000 ? `${summary.scanMs} ms` : `${(summary.scanMs / 1000).toFixed(1)} s`;
+  setStatus(`Scanned in ${took} (${how}), categorised in ${summary.categoriseMs} ms`);
   $('elevate').hidden = !summary.adminWouldHelp;
   await expand(0);
   select(0);

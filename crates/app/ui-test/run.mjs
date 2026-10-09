@@ -168,6 +168,8 @@ await test('file types', async () => {
   await js(`setView('types')`);
   await wait(300);
   check('rows', await js(`return [...document.querySelectorAll('.types-list .t-ext')].map(e => e.textContent)`), ['.bin', '.txt', 'no extension']);
+  // One line per type, not wrapped (the list's own grid once overrode it).
+  check('one line each', await js(`return [...document.querySelectorAll('.types-list li')].every(li => li.getBoundingClientRect().height < 40)`), true);
   await js(`document.querySelector('.types-list li[data-ext="txt"]').click()`);
   await wait(400);
   check('filters', await js(`return [view, $('f-ext').value]`), ['results', 'txt']);
