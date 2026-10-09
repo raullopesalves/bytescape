@@ -1,39 +1,52 @@
 name: Release
 
-# Pushing a version tag (git tag v0.1.0 && git push origin v0.1.0) builds the
-# installer, the standalone app and the CLI on a clean Windows runner and
-# attaches them to a draft release. Nothing is public until the draft is
-# published on GitHub.
+# Pushing a version tag (git tag v0.1.1 && git push origin v0.1.1) builds the
+# installer, the standalone app and the CLI for x64 and ARM64 on clean
+# Windows runners and attaches them to a draft release. Nothing is public
+# until the draft is published on GitHub.
+#
+# Run it by hand (Actions > Release > Run workflow) for a test build: the
+# files are kept as workflow artifacts and no release is made.
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and draft a release
+  build:
+    name: Build (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
     env:
       TAURI_CLI_VERSION: 2.12.1
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check the tag matches the version
+      - name: Read the version
         run: |
-          $tag = "${{ github.ref_name }}"
           $version = (Get-Content crates/app/tauri.conf.json -Raw | ConvertFrom-Json).version
           $workspace = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ($tag -ne "v$version" -or $workspace -ne $version) {
-            throw "Tag $tag, tauri.conf.json $version and Cargo.toml $workspace must agree"
+          if ($workspace -ne $version) {
+            throw "tauri.conf.json $version and Cargo.toml $workspace must agree"
+          }
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$version") {
+            throw "Tag ${{ github.ref_name }} doesn't match version $version"
           }
           "VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
           rustup default stable
 
       - name: Cache cargo
@@ -43,8 +56,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ github.event.repository.name }}-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ github.event.repository.name }}-release-
+          key: ${{ runner.os }}-${{ github.event.repository.name }}-release-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ github.event.repository.name }}-release-${{ matrix.arch }}-
 
       - name: Cache the Tauri CLI
         id: tauri-cli
@@ -57,61 +70,97 @@ jobs:
         if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked
 
+      # ARM64 code can't run on this x64 runner; the x64 build tests.
       - name: Test
+        if: matrix.arch == 'x64'
         run: cargo test --locked
 
       # Signs the installer for the in-app updater (the .sig goes into
-      # latest.json). The key has no password.
+      # latest.json). The key has no password. Without the key (a test build
+      # before the secret exists) the installer is built unsigned.
       - name: Build the installer and the app
         working-directory: crates/app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: cargo tauri build --ci --config tauri.updater.conf.json -- --locked
+        run: |
+          $sign = if ($env:TAURI_SIGNING_PRIVATE_KEY) { @("--config", "tauri.updater.conf.json") } else { @() }
+          cargo tauri build --ci --target ${{ matrix.target }} @sign -- --locked
 
       - name: Build the CLI
-        run: cargo build --release --locked -p bytescape-cli
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bytescape-cli
 
       - name: Collect the files
         run: |
+          $out = "target/${{ matrix.target }}/release"
+          $setup = "Bytescape_${env:VERSION}_${{ matrix.arch }}-setup.exe"
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item "target/release/bundle/nsis/Bytescape_${env:VERSION}_x64-setup.exe" dist/
-          Copy-Item target/release/bytescape.exe "dist/Bytescape_${env:VERSION}_x64_portable.exe"
-          Copy-Item target/release/bytescape-cli.exe "dist/bytescape-cli_${env:VERSION}_x64.exe"
-          Get-ChildItem dist -File | ForEach-Object {
+          Copy-Item "$out/bundle/nsis/$setup" dist/
+          if (Test-Path "$out/bundle/nsis/$setup.sig") { Copy-Item "$out/bundle/nsis/$setup.sig" dist/ }
+          Copy-Item "$out/bytescape.exe" "dist/Bytescape_${env:VERSION}_${{ matrix.arch }}_portable.exe"
+          Copy-Item "$out/bytescape-cli.exe" "dist/bytescape-cli_${env:VERSION}_${{ matrix.arch }}.exe"
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bytescape-${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    name: Draft the release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and latest.json
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          Get-ChildItem dist -Filter *.exe | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
           Get-Content dist/SHA256SUMS.txt
           # What the app's updater reads from the latest release.
-          $setup = "Bytescape_${env:VERSION}_x64-setup.exe"
+          $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          $platform = { param($arch)
+            $setup = "Bytescape_${version}_$arch-setup.exe"
+            [ordered]@{
+              signature = (Get-Content "dist/$setup.sig" -Raw).Trim()
+              url = "$base/$setup"
+            }
+          }
           [ordered]@{
-            version = $env:VERSION
+            version = $version
             notes = "See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }} for what's new."
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = [ordered]@{
-                signature = (Get-Content "target/release/bundle/nsis/$setup.sig" -Raw).Trim()
-                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$setup"
-              }
+            platforms = [ordered]@{
+              "windows-x86_64" = & $platform "x64"
+              "windows-aarch64" = & $platform "arm64"
             }
           } | ConvertTo-Json -Depth 4 | Set-Content dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
+          Remove-Item dist/*.sig
 
       - name: Create a draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
           $notes = @"
-          **Download** ``Bytescape_${env:VERSION}_x64-setup.exe`` and run it. It installs
+          **Download** ``Bytescape_${v}_x64-setup.exe`` and run it (on a Windows on ARM PC, ``Bytescape_${v}_arm64-setup.exe``). It installs
           for your user only (no administrator rights) and downloads WebView2 if
           Windows doesn't have it. The files aren't code-signed yet, so Windows
           SmartScreen may say "Windows protected your PC": choose **More info**,
           then **Run anyway**.
 
-          - ``Bytescape_${env:VERSION}_x64_portable.exe``: the app without installing (needs WebView2, which Windows 10 and 11 normally have).
-          - ``bytescape-cli_${env:VERSION}_x64.exe``: the command-line tool.
+          - ``Bytescape_${v}_x64_portable.exe`` / ``_arm64_portable.exe``: the app without installing (needs WebView2, which Windows 10 and 11 normally have).
+          - ``bytescape-cli_${v}_x64.exe`` / ``_arm64.exe``: the command-line tool.
           - ``SHA256SUMS.txt``: checksums of the files above.
           - ``latest.json``: read by Bytescape's update button.
           "@
           gh release create "${{ github.ref_name }}" (Get-ChildItem dist -File).FullName `
-            --draft --title "Bytescape ${env:VERSION}" --notes $notes --generate-notes
+            --repo "${{ github.repository }}" --draft --title "Bytescape $v" --notes $notes --generate-notes
