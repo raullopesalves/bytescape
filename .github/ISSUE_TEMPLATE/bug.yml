@@ -1,0 +1,30 @@
+name: Something's wrong
+description: A crash, a wrong size, something that doesn't work as it should
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Bytescape version
+      description: About shows it.
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you scanned (drive, folder, network share; as administrator or not), what you did, what you saw, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The end of the log file (optional)
+      description: About > Show the log file. It lists folders you scanned and deleted, so look it over first.
+      render: text

@@ -1,0 +1,11 @@
+name: An idea
+description: Something Bytescape could do, or do better
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What you're trying to do, and how Bytescape could make it easier.
+    validations:
+      required: true

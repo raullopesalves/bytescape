@@ -10,7 +10,7 @@ dependencies, ...), and helps you clean up safely.
 
 Get `Bytescape_<version>_x64-setup.exe` from the
 [latest release](https://github.com/raullopesalves/bytescape/releases/latest)
-and run it. It installs for your user only, without administrator rights, and
+and run it (`_arm64-setup.exe` on a Windows on ARM PC). It installs for your user only, without administrator rights, and
 downloads WebView2 if Windows doesn't have it. The files aren't code-signed
 yet, so SmartScreen may say "Windows protected your PC": choose **More info**,
 then **Run anyway**.
@@ -63,6 +63,27 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
 - **Export** a folder's contents or search results as CSV or JSON.
 
 ![Tree and treemap](docs/screenshots/tree-and-treemap.png)
+
+## Keyboard
+
+Press **F1** in the app for the full list. The ones worth knowing:
+
+| Keys | What they do |
+| --- | --- |
+| **B** or **Delete** | Put the selected items in the cleanup basket, or take them out |
+| **Ctrl+click**, **Shift+click**, **Ctrl+A** | Select several rows |
+| **F5** | Rescan the selected folder |
+| **Ctrl+C** / **Ctrl+Enter** / **Alt+Enter** | Copy the path / open / Properties |
+| **Menu key** or **Shift+F10** | The right-click menu |
+
+## Privacy
+
+Bytescape reads your drives on your PC and sends nothing about them
+anywhere. The one network request is the update check when it starts: it
+downloads the latest release's `latest.json` from GitHub to compare version
+numbers (turn it off in Settings). A small log of scans, deletes and errors
+stays on your PC, in `%LOCALAPPDATA%\io.github.raullopesalves.bytescape`
+(About > Show the log file), for when something goes wrong.
 
 ## Safety
 
@@ -158,8 +179,10 @@ The release needs the update signing key in the repository secret
 `TAURI_SIGNING_PRIVATE_KEY` (see CLAUDE.md). The Release workflow
 (`.github/workflows/release.yml`) checks the tag matches
 both versions, runs the tests, builds the installer, the standalone app and
-the CLI on a clean Windows runner, and attaches them with checksums to a
-**draft** release. Review the draft on GitHub, then publish it.
+the CLI for x64 and ARM64 on clean Windows runners, and attaches them with
+checksums and the updater's `latest.json` to a **draft** release. Review the
+draft on GitHub, then publish it. Running the workflow by hand (Actions >
+Release > Run workflow) makes a test build without a release.
 
 ## Project layout
 
@@ -173,6 +196,7 @@ the CLI on a clean Windows runner, and attaches them with checksums to a
 | `crates/app` | The Tauri desktop app; its front end is plain HTML, CSS and JavaScript in `crates/app/ui` |
 
 `docs/HANDOFF.md` has the design notes and measurements behind each part.
+Want to help? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
