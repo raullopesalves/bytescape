@@ -24,6 +24,7 @@ const handlers = {};
 let dupesDone = false;
 let mockShellMenu = false;
 let mockExclude = [];
+const mockLog = []; // window errors sent to the log
 const mockActions = []; // right-click actions "run", for tests
 const mockCleanups = []; // cleanups "run", for tests
 const mockHistory = [
@@ -306,6 +307,8 @@ window.__TAURI__ = {
         };
         case 'run_cleanup': mockCleanups.push(args.what); return true;
         case 'app_version': return '0.1.0';
+        case 'log_ui': mockLog.push(args.msg); return null;
+        case 'open_log': mockActions.push('open_log'); return null;
         case 'set_exclude': mockExclude = args.exclude; return null;
         case 'rules_info': return ['%APPDATA%\\io.github.raullopesalves.bytescape\\categories.toml', false];
         case 'open_rules': mockActions.push('open_rules'); return null;

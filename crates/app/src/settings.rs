@@ -34,13 +34,15 @@ pub fn cleanup_status(state: State<AppState>) -> CleanupStatus {
 #[tauri::command]
 pub fn run_cleanup(app: AppHandle, what: String) -> Result<bool, String> {
     let owner = owner_window(&app);
-    match what.as_str() {
+    let result = match what.as_str() {
         "recycle" => Ok(wincleanup::empty_recycle_bin(owner)),
         "hibernation" => wincleanup::hibernation_off(owner).map(|()| true),
         "components" => wincleanup::component_cleanup(owner).map(|()| true),
         "windows-old" => wincleanup::open_storage_settings(owner).map(|()| true),
         _ => Err(format!("Unknown cleanup {what}.")),
-    }
+    };
+    applog::write(&format!("Windows cleanup {what}: {result:?}"));
+    result
 }
 
 #[tauri::command]
@@ -50,7 +52,12 @@ pub fn shell_menu_state() -> bool {
 
 #[tauri::command]
 pub fn set_shell_menu(on: bool) -> Result<bool, String> {
-    shell_menu::set(on)?;
+    let set = shell_menu::set(on);
+    applog::write(&format!(
+        "Explorer menu {}: {set:?}",
+        if on { "on" } else { "off" }
+    ));
+    set?;
     Ok(shell_menu::is_on())
 }
 

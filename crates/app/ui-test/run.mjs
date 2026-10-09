@@ -202,6 +202,21 @@ await test('settings', async () => {
   await js(`closeModal()`);
 });
 
+await test('shortcuts and about', async () => {
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'F1', code: 'F1', windowsVirtualKeyCode: 112 });
+  await wait(150);
+  check('F1 lists the shortcuts', await js(`return [$('modal-title').textContent, document.querySelectorAll('table.keys tr').length > 15]`), ['Keyboard shortcuts', true]);
+  await js(`closeModal(); openAbout(); $('about-log').click()`);
+  check('about shows the log', await js(`return mockActions.includes('open_log')`), true);
+  await js(`closeModal()`);
+});
+
+await test('window errors go to the log', async () => {
+  await js(`setTimeout(() => { throw new Error('test error'); }, 0)`);
+  await wait(200);
+  check('logged', await js(`return mockLog.some((m) => m.includes('test error'))`), true);
+});
+
 await test('start screen', async () => {
   await js(`await showStart()`);
   check('drives', await js(`return [...document.querySelectorAll('#drives .drive')].map(b => b.dataset.path)`), ['C:\\', 'D:\\', 'Z:\\', '::all-drives']);

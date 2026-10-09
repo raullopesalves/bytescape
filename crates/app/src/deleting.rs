@@ -248,5 +248,22 @@ pub(crate) fn run_delete(
         s.search = None;
     }
     *state.scanning.lock().unwrap() = None;
+    applog::write(&format!(
+        "deleted {} items, {} bytes, {}{}; {} failed{}",
+        done.deleted,
+        done.bytes,
+        if done.recycled {
+            "to the Recycle Bin"
+        } else {
+            "permanently"
+        },
+        if done.cancelled { ", cancelled" } else { "" },
+        done.failed.len(),
+        done.failed
+            .iter()
+            .take(20)
+            .map(|f| format!(" | {}: {}", f.path, f.error))
+            .collect::<String>(),
+    ));
     let _ = app.emit("delete-done", done);
 }

@@ -56,6 +56,7 @@ pub fn start_scan(app: AppHandle, state: State<AppState>, path: String) -> Resul
     *scanning = Some(cancel.clone());
     // Free the previous tree before building the next one.
     *state.session.lock().unwrap() = None;
+    applog::write(&format!("scan {path}"));
     thread::spawn(move || run_scan(app, PathBuf::from(path), cancel));
     Ok(())
 }
@@ -119,10 +120,31 @@ pub(crate) fn run_scan(app: AppHandle, path: PathBuf, cancel: Arc<AtomicBool>) {
     });
     let event = match outcome {
         Ok(session) => {
+            let st = session.tree.stats();
+            applog::write(&format!(
+                "scanned {}: {} files, {} folders, {} bytes, {} errors, {} ms, {}{}",
+                path.display(),
+                st.files,
+                st.dirs,
+                session.tree.node(session.tree.root()).size,
+                st.errors,
+                st.elapsed.as_millis(),
+                if st.method == scanner::ScanMethod::Mft {
+                    "mft"
+                } else {
+                    "walk"
+                },
+                st.mft_skipped
+                    .as_ref()
+                    .map_or(String::new(), |w| format!(" (mft skipped: {w})")),
+            ));
             *state.session.lock().unwrap() = Some(session);
             Ok(())
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            applog::write(&format!("scan of {} stopped: {e}", path.display()));
+            Err(e.to_string())
+        }
     };
     *state.scanning.lock().unwrap() = None;
     match event {
@@ -196,6 +218,7 @@ pub fn rescan_folder(app: AppHandle, state: State<AppState>, id: NodeId) -> Resu
     let cancel = Arc::new(AtomicBool::new(false));
     *scanning = Some(cancel.clone());
     let shown = path.display().to_string();
+    applog::write(&format!("rescan {shown}"));
     thread::spawn(move || run_rescan(app, id, path, cancel));
     Ok(shown)
 }
@@ -246,7 +269,10 @@ pub(crate) fn run_rescan(app: AppHandle, id: NodeId, path: PathBuf, cancel: Arc<
     *state.scanning.lock().unwrap() = None;
     let _ = match outcome {
         Ok(()) => app.emit("rescan-done", id),
-        Err(e) => app.emit("rescan-error", e),
+        Err(e) => {
+            applog::write(&format!("rescan stopped: {e}"));
+            app.emit("rescan-error", e)
+        }
     };
 }
 

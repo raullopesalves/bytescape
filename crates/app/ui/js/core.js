@@ -24,6 +24,14 @@ const COLORS = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// Script errors go to the log file (see About), at most 50 per run.
+let errorsLogged = 0;
+function logError(what) {
+  if (errorsLogged++ < 50) invoke('log_ui', { msg: String(what) }).catch(() => {});
+}
+window.addEventListener('error', (e) => logError(`${e.message} at ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => logError(e.reason?.stack ?? e.reason));
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 let lastPath = null;

@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod applog;
 mod basket;
 mod browse;
 mod deleting;
@@ -209,6 +210,28 @@ fn move_old_data(bases: &[PathBuf]) {
     }
 }
 
+/// An error from the window (a script error), for the log.
+#[tauri::command]
+fn log_ui(msg: String) {
+    applog::write(&format!(
+        "window: {}",
+        msg.chars().take(2000).collect::<String>()
+    ));
+}
+
+/// Shows the log file in Explorer.
+#[tauri::command]
+fn open_log(app: AppHandle) -> Result<(), String> {
+    let path = applog::path().ok_or("There's no log yet.")?;
+    elevation::shell_execute(
+        "open",
+        "explorer.exe",
+        &format!("/select,\"{}\"", path.display()),
+        true,
+        owner_window(&app),
+    )
+}
+
 fn main() {
     // Before Tauri or WebView2 open anything in these folders.
     let bases: Vec<PathBuf> = ["APPDATA", "LOCALAPPDATA"]
@@ -230,6 +253,14 @@ fn main() {
     }
     tauri::Builder::default()
         .setup(move |app| {
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                applog::init(&dir);
+            }
+            applog::write(&format!(
+                "Bytescape {} started{}",
+                app.package_info().version,
+                if elevated { " as administrator" } else { "" }
+            ));
             *app.state::<AppState>().history.lock().unwrap() = scan_history::open(app.handle());
             if elevated {
                 if let Some(w) = app.get_webview_window("main") {
@@ -272,6 +303,8 @@ fn main() {
             settings::run_cleanup,
             settings::shell_menu_state,
             settings::set_shell_menu,
+            log_ui,
+            open_log,
             updates::check_update,
             updates::install_update,
             updates::app_version,

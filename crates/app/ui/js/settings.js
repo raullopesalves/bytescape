@@ -91,12 +91,13 @@ async function openSettings() {
       <label><input type="checkbox" id="set-shell"${shell ? ' checked' : ''}> Show “Scan with Bytescape” when right-clicking a folder or drive</label></section>
     <section class="set"><h3>Updates</h3>
       <div class="row-of"><label><input type="checkbox" id="set-auto"${store.get('autoUpdate') !== 'false' ? ' checked' : ''}> Check when Bytescape starts</label>
-        <button id="set-check">Check now</button></div></section>
+        <button id="set-check">Check now</button></div>
+      <p class="note">This only asks GitHub for the newest version number; nothing about your files or PC is sent.</p></section>
     <section class="set"><h3>Category rules</h3>
       <p class="note">Your own rules ${rules ? `go in <code>${esc(rules[0])}</code>` : 'file'}. They add to the built-in ones.</p>
       <div class="row-of"><button id="set-rules-open">${rules?.[1] ? 'Open rules file' : 'Create rules file'}</button>
         <button id="set-rules-reload"${summary ? '' : ' disabled'}>Reload rules</button><span class="note" id="set-rules-said"></span></div></section>`,
-  [['About', '', openAbout], ['Close', 'primary', closeModal]]);
+  [['Keyboard shortcuts', '', openShortcuts], ['About', '', openAbout], ['Close', 'primary', closeModal]]);
   $('modal').querySelector('.modal-card').classList.add('wide');
   $('modal-body').onchange = async (e) => {
     const t = e.target;
@@ -140,6 +141,49 @@ async function openSettings() {
   };
 }
 
+const SHORTCUTS = [
+  ['Lists (tree and results)', [
+    ['↑ ↓, Page Up/Down, Home, End', 'Move'],
+    ['→ ←', 'Open or close a folder'],
+    ['Enter', 'Open or close a folder; in the list by size, show it in the tree'],
+    ['Ctrl+click, Ctrl+Space', 'Add a row to the selection, or take it out'],
+    ['Shift+click, Shift+arrows', 'Select a range'],
+    ['Ctrl+arrows', 'Move without changing the selection'],
+    ['Ctrl+A', 'Select everything in the list'],
+  ]],
+  ['The selected items', [
+    ['B or Delete', 'Put in the cleanup basket, or take out'],
+    ['F5', 'Rescan the folder (a file’s folder)'],
+    ['Ctrl+C', 'Copy the path'],
+    ['Ctrl+Enter', 'Open'],
+    ['Alt+Enter', 'Properties'],
+    ['Menu key, Shift+F10', 'The right-click menu'],
+  ]],
+  ['Treemap', [
+    ['Click', 'Show in the tree'],
+    ['Double-click', 'Zoom in (the path above the map zooms out)'],
+    ['Right-click', 'The menu'],
+  ]],
+  ['Anywhere', [
+    ['F1', 'This list'],
+    ['Esc', 'Close a menu or dialog'],
+  ]],
+];
+
+function openShortcuts() {
+  modal('Keyboard shortcuts', SHORTCUTS.map(([title, rows]) => `<section class="set"><h3>${title}</h3>
+    <table class="keys">${rows.map(([k, what]) => `<tr><th>${k.split(', ').map((x) => `<kbd>${esc(x)}</kbd>`).join(' ')}</th><td>${esc(what)}</td></tr>`).join('')}</table></section>`).join(''),
+  [['Close', 'primary', closeModal]]);
+  $('modal').querySelector('.modal-card').classList.add('wide');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F1') {
+    e.preventDefault();
+    openShortcuts();
+  }
+});
+
 function openAbout() {
   const link = (path, label) => `<button class="link" data-link="${path}">${label}</button>`;
   modal('About Bytescape', `
@@ -151,10 +195,16 @@ function openAbout() {
       ${link('/releases', 'Releases and what’s new')}
       ${link('/issues', 'Report a problem or ask for a feature')}
       ${link('/blob/main/docs/THIRD_PARTY_LICENSES.md', 'Licences of the libraries it uses')}
-    </div>`,
+      <button class="link" id="about-log">Show the log file</button>
+    </div>
+    <p class="note">Bytescape keeps a small log of scans, deletes and errors on this PC, to help find problems. Nothing is sent anywhere; checking for updates only asks GitHub for the newest version number.</p>`,
   [['Check for updates', '', () => { closeModal(); checkUpdate(true); }], ['Close', 'primary', closeModal]]);
   for (const slot of $('modal-body').querySelectorAll('.logo-slot')) slot.innerHTML = LOGO_SVG;
   $('modal-body').onclick = (e) => {
+    if (e.target.closest('#about-log')) {
+      invoke('open_log').catch((err) => setStatus(String(err), true));
+      return;
+    }
     const path = e.target.closest('[data-link]')?.dataset.link;
     if (path === undefined) return;
     invoke('open_link', { url: `https://github.com/raullopesalves/bytescape${path}` }).catch((err) => setStatus(String(err), true));

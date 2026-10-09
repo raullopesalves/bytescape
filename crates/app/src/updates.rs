@@ -44,7 +44,10 @@ pub async fn check_update(
         .map_err(|e| e.to_string())?
         .check()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            crate::applog::write(&format!("update check failed: {e}"));
+            e.to_string()
+        })?;
     let info = update.as_ref().map(|u| Available {
         version: u.version.clone(),
         current: u.current_version.clone(),
@@ -66,6 +69,7 @@ pub async fn install_update(app: AppHandle, pending: State<'_, Pending>) -> Resu
         .unwrap()
         .take()
         .ok_or("No update to install; check for updates again.")?;
+    crate::applog::write(&format!("installing update {}", update.version));
     let mut done = 0u64;
     update
         .download_and_install(
@@ -76,7 +80,10 @@ pub async fn install_update(app: AppHandle, pending: State<'_, Pending>) -> Resu
             || {},
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            crate::applog::write(&format!("update failed: {e}"));
+            e.to_string()
+        })
 }
 
 #[tauri::command]
