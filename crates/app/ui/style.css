@@ -17,6 +17,16 @@
   --map-rest: rgba(255, 255, 255, 0.5);
   --map-other: #b9bcc4;
   --map-dim: rgba(255, 255, 255, 0.8);
+  /* Delete red (the basket) and caution amber: the same in both themes. */
+  --del: #e04848;
+  --del-text: #c43c3c; /* 4.5:1 on white; dark uses a lighter red */
+  --del-bg: rgba(224, 72, 72, .08);
+  --del-strong: #c63d3d;
+  --caution: #e0a030;
+  /* Motion: quick ease-out for feedback on hover and press. */
+  --fast: 120ms;
+  --ease: cubic-bezier(.25, 1, .5, 1);
+  accent-color: var(--accent);
   color-scheme: light;
 }
 
@@ -41,6 +51,7 @@
     --map-rest: rgba(18, 19, 23, 0.5);
     --map-other: #4a4d57;
     --map-dim: rgba(18, 19, 23, 0.8);
+    --del-text: #e86464;
     color-scheme: dark;
   }
 }
@@ -63,6 +74,7 @@
   --map-rest: rgba(18, 19, 23, 0.5);
   --map-other: #4a4d57;
   --map-dim: rgba(18, 19, 23, 0.8);
+  --del-text: #e86464;
   color-scheme: dark;
 }
 
@@ -90,8 +102,15 @@ button {
   border-radius: 6px;
   padding: 5px 12px;
   cursor: pointer;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease), filter var(--fast) var(--ease), transform var(--fast) var(--ease);
 }
 button:hover { background: var(--hover); }
+/* Press feedback; joined and menu buttons stay put. */
+button:active:not(:disabled) { transform: scale(.97); }
+.seg button:active, .menu button:active { transform: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+::selection { background: var(--select); color: var(--text); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.primary:hover { filter: brightness(1.08); }
 button.big { padding: 9px 20px; font-size: 14px; }
@@ -205,9 +224,6 @@ main {
 
 /* Cleanup basket: red, since what's in it is to be deleted. */
 .basket-box {
-  --del: #e04848;
-  --del-text: #e86464;
-  --del-bg: rgba(224, 72, 72, .08);
   margin: 18px -8px 0;
   padding: 2px 8px 10px;
   border-left: 3px solid var(--del);
@@ -232,20 +248,20 @@ main {
 .b-reason { font-size: 12px; color: var(--muted); margin: 2px 0 0 16px; }
 .b-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .lvl-safe .b-dot { background: var(--safe); }
-.lvl-warn .b-dot { background: #e0a030; }
-.lvl-danger .b-dot { background: #e04848; }
-.lvl-danger .b-reason { color: #e05a5a; }
+.lvl-warn .b-dot { background: var(--caution); }
+.lvl-danger .b-dot { background: var(--del); }
+.lvl-danger .b-reason { color: var(--del-text); }
 .lvl-blocked .b-name { text-decoration: line-through; color: var(--muted); }
 .basket-foot { margin-top: 8px; }
 .basket-total { font-weight: 600; font-variant-numeric: tabular-nums; margin-bottom: 6px; cursor: pointer; }
 .basket-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-button.danger-btn { background: #c63d3d; border-color: #c63d3d; color: #fff; }
-button.danger-btn:hover { filter: brightness(1.08); background: #c63d3d; }
+button.danger-btn { background: var(--del-strong); border-color: var(--del-strong); color: #fff; }
+button.danger-btn:hover { filter: brightness(1.08); background: var(--del-strong); }
 button:disabled { opacity: .5; cursor: default; filter: none; }
-.tag.basket { color: #e86464; }
+.tag.basket { color: var(--del-text); }
 /* In the cleanup basket: tinted red and struck through. */
 .row.inbasket:not(.sel) { background: rgba(224, 72, 72, .10); }
-.row.inbasket .label { color: #e86464; text-decoration: line-through rgba(224, 72, 72, .55); }
+.row.inbasket .label { color: var(--del-text); text-decoration: line-through rgba(224, 72, 72, .55); }
 
 /* Context menu */
 .menu {
@@ -295,17 +311,17 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 /* The basket opened big. */
 .modal-card.wide { width: min(980px, 100%); }
 .confirm-list.big { max-height: none; }
-.confirm-list.big li { border-left: 3px solid #e04848; }
+.confirm-list.big li { border-left: 3px solid var(--del); }
 .confirm-list.big li.lvl-blocked { border-left-color: var(--muted); }
 .confirm-list.big .b-name { text-align: left; padding: 0; font-weight: 600; }
-.confirm-list.big .b-size { color: #e86464; font-weight: 600; }
+.confirm-list.big .b-size { color: var(--del-text); font-weight: 600; }
 .b-sum { margin: 0 0 10px; }
-.b-sum b { color: #e86464; }
+.b-sum b { color: var(--del-text); }
 .method { border: none; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
 .method label, .ack { display: flex; gap: 8px; align-items: baseline; }
 .method .note, .ack .note { margin: 0; }
 .ack { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--hover); }
-.ack.danger { color: #e05a5a; }
+.ack.danger { color: var(--del-text); }
 .fail-list { font-size: 12px; margin: 8px 0 0; padding-left: 18px; }
 .fail-list li { margin-bottom: 4px; word-break: break-all; }
 .note.error { color: var(--warn); }
@@ -402,7 +418,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
-.filters input[type=search], .filters input[type=text], .filters select {
+.filters input[type=search], .filters input[type=text], .filters select, .path-form input {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -411,7 +427,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   padding: 4px 8px;
   min-width: 0;
 }
-.filters input:focus, .filters select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.filters input:focus, .filters select:focus, .path-form input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 #f-name { flex: 1 1 200px; }
 #f-ext { flex: 0 1 150px; }
 .filters label { display: flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
@@ -557,7 +573,6 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   padding: 14px 16px;
   border-radius: 10px;
   background: var(--panel);
-  transition: transform .12s ease, border-color .12s ease;
 }
 .drive:hover { transform: translateY(-2px); border-color: var(--accent); background: var(--panel); }
 .drive .d-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -586,7 +601,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .recent .r-when { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .start-actions { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; align-items: center; }
 .path-form { display: flex; gap: 6px; flex: 1 1 320px; }
-.path-form input { flex: 1; min-width: 0; }
+.path-form input { flex: 1; min-width: 0; padding: 8px 10px; }
 .update-btn { margin-left: auto; border-color: var(--safe); color: var(--safe); font-weight: 600; }
 .update-notes { white-space: pre-wrap; max-height: 40vh; overflow-y: auto; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .version-line { margin-top: 10px; color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -638,7 +653,8 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   .splash .logo .plate, .splash .logo .tile, .splash-name { animation: none; }
   .loader .logo .tile { animation: none; }
   .scan-bar span { animation: none; width: 100%; opacity: .5; }
-  .drive { transition: none; }
+  /* Colour fades stay; nothing moves. */
+  button:active:not(:disabled), .drive:hover { transform: none; }
 }
 .seg button.on { background: var(--select); }
 
@@ -705,7 +721,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .hits { margin-left: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Probably shouldn't be deleted or changed by hand; the reason is the tooltip. */
 .risk { display: inline-flex; flex: none; margin-right: 5px; color: var(--warn); }
-.risk.blocked { color: #d04848; }
+.risk.blocked { color: var(--del); }
 .folder-cell { font-size: 12px; color: var(--muted); }
 .crumb { cursor: pointer; }
 .crumb:hover { color: var(--accent); text-decoration: underline; }
