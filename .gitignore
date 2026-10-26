@@ -11,3 +11,8 @@ crates/app/gen/
 
 # Builds copied to the repo root for quick testing
 /*.exe
+
+# Private notes, kept on the owner's PC only
+/CLAUDE.md
+/docs/HANDOFF.md
+/docs/NEXT_SESSION.md

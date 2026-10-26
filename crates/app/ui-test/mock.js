@@ -1,5 +1,5 @@
 // Stand-in for the Tauri API, so ui/ runs in a plain browser with a small fake
-// tree. Used by ui-test/index.html; see docs/HANDOFF.md ("Testing the UI").
+// tree. Used by ui-test/index.html.
 //
 // Tree: X:\demo -> big.bin (1000 B, Caches), b/ (c/ -> deep.txt, b.txt),
 //       a/ (Documents; a1.txt, a2.txt, a3.txt), z/ (empty)

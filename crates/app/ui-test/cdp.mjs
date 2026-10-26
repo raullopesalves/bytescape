@@ -1,5 +1,5 @@
 // Drives a page over the Chrome DevTools Protocol (WebView2 or headless Edge).
-// See docs/HANDOFF.md ("Testing the UI"). Port: CDP_PORT (default 9222).
+// Port: CDP_PORT (default 9222).
 // usage: node cdp.mjs eval "<js>" | shot <file.png> | key <Key> [count] | click <x> <y> [double]
 //        | send <Method> '<json params>'   (any protocol call, e.g. Emulation.setEmulatedMedia)
 import { writeFileSync } from 'node:fs';

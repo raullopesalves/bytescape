@@ -30,8 +30,7 @@ CI runs the same checks on Windows.
 
 ## How the code is laid out
 
-`docs/HANDOFF.md` explains each part and the reasons behind it. In short:
-the scanner and the categories are libraries with no UI code; the desktop
+The scanner and the categories are libraries with no UI code; the desktop
 app keeps the scan in Rust and the front end (plain HTML, CSS and
 JavaScript, no build step) asks for one folder at a time.
 

@@ -186,7 +186,7 @@ git push origin v0.1.0
 ```
 
 The release needs the update signing key in the repository secret
-`TAURI_SIGNING_PRIVATE_KEY` (see CLAUDE.md). The Release workflow
+`TAURI_SIGNING_PRIVATE_KEY`. The Release workflow
 (`.github/workflows/release.yml`) checks the tag matches
 both versions, runs the tests, builds the installer, the standalone app and
 the CLI for x64 and ARM64 on clean Windows runners, and attaches them with
@@ -205,7 +205,6 @@ Release > Run workflow) makes a test build without a release.
 | `crates/cli` | `bytescape-cli`: scan from the command line, with JSON export |
 | `crates/app` | The Tauri desktop app; its front end is plain HTML, CSS and JavaScript in `crates/app/ui` |
 
-`docs/HANDOFF.md` has the design notes and measurements behind each part.
 Want to help? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

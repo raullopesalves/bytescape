@@ -5,7 +5,7 @@
 //! with a small progress window, and the new version starts.
 //!
 //! Releases are signed by the release workflow with the private key kept in
-//! the repository's secrets (see docs/HANDOFF.md, "Updates").
+//! the repository's secrets.
 
 use std::sync::Mutex;
 
