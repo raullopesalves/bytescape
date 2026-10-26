@@ -198,7 +198,7 @@ await test('settings', async () => {
   await js(`$('settings').click()`);
   await wait(200);
   await js(`const d = document.querySelector('input[name=theme][value=dark]'); d.checked = true; d.dispatchEvent(new Event('change', { bubbles: true }))`);
-  check('dark theme', await js(`return getComputedStyle(document.body).backgroundColor`), 'rgb(23, 24, 28)');
+  check('dark theme', await js(`return getComputedStyle(document.body).backgroundColor`), 'rgb(32, 32, 32)');
   await js(`const t = $('set-exclude'); t.value = 'node_modules\\n  \\nD:/Backups'; t.dispatchEvent(new Event('change', { bubbles: true }))`);
   check('folders to leave out', await js(`return mockExclude`), ['node_modules', 'D:/Backups']);
   await js(`closeModal()`);

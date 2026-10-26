@@ -77,9 +77,25 @@ async function basketToggleMany(ids, skippedRoot) {
 const BASKET_SIDE = 100;  // rows in the side panel
 const BASKET_BIG = 1000;  // rows in the big view and the delete dialog
 
+let basketShown = 0; // items in the last render, to bump the count when it grows
+
+/** The command bar's basket button says what B does to the item at the cursor. */
+function syncBasketButton() {
+  const id = currentId();
+  $('basket-add').textContent = id !== undefined && basketIds.has(id) ? 'Take out of basket' : 'Add to basket';
+}
+
 function renderBasket() {
   const b = basket;
-  $('basket-count').textContent = b.items.length ? `(${b.items.length})` : '';
+  const count = $('basket-count');
+  count.textContent = b.items.length ? `(${b.items.length})` : '';
+  if (b.items.length > basketShown) {
+    count.classList.remove('bump');
+    void count.offsetWidth; // restart the animation
+    count.classList.add('bump');
+  }
+  basketShown = b.items.length;
+  syncBasketButton();
   $('basket-empty').hidden = b.items.length > 0;
   $('basket-foot').hidden = b.items.length === 0;
   // Drawing tens of thousands of rows is slow; the big view has more.

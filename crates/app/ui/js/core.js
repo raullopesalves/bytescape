@@ -223,6 +223,21 @@ async function loadResult() {
 
 // ---------- side panel ----------
 
+/** The navigation pane's drives: how full each is; a click scans it. */
+async function renderNavDrives() {
+  const drives = await invoke('drives').catch(() => []);
+  const here = (lastPath ?? '').toLowerCase();
+  $('nav-drives').innerHTML = drives.map((d) => {
+    const used = d.total ? ((d.total - d.free) * 100) / d.total : 0;
+    const on = d.path.toLowerCase() === here;
+    return `<button data-path="${esc(d.path)}" class="${on ? 'on' : ''}" title="${on ? 'Scanned now' : `Scan ${esc(d.path)}`}">
+        ${DRIVE_ICON}<span class="nd-name">${driveName(d)}</span>
+        <span class="nd-bar"><span class="${used > 90 ? 'full' : ''}" style="width:${used}%"></span></span>
+        <span class="nd-free">${human(d.free)} free of ${human(d.total)}</span>
+      </button>`;
+  }).join('');
+}
+
 function renderSide() {
   const s = summary;
   const r = s.root;
@@ -262,6 +277,8 @@ function renderSide() {
       <div class="cat-sub"><span>${pct.toFixed(1)}% · ${plural(c.files, 'file')}</span>${safe}</div>
     </li>`;
   }).join('');
+
+  renderNavDrives();
 
   const note = $('rules-note');
   note.classList.toggle('error', !!s.rulesError);

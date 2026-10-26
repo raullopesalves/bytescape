@@ -218,6 +218,7 @@ async function selectResult(i, how = 'one') {
   if (!it) return;
   $('selpath').textContent = it.path;
   $('reveal').hidden = false;
+  showAddress(it.row.id);
   // Its ancestors let the treemap outline the nearest block that is drawn.
   const chain = await invoke('ancestors', { id: it.row.id });
   if (search !== s || s.sel !== i) return;

@@ -234,6 +234,11 @@ function rememberRecent(path) {
   store.set('recent', JSON.stringify(list));
 }
 
+/** "Windows (C:)", or the path when the drive has no label. */
+function driveName(d) {
+  return d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+}
+
 /** Shows the start screen: drives, standard folders, recent scans. */
 async function showStart() {
   $('scanning').hidden = true;
@@ -254,8 +259,7 @@ async function showStart() {
   }
   $('drives').innerHTML = drives.map((d) => {
     const used = d.total ? ((d.total - d.free) * 100) / d.total : 0;
-    const name = d.kind === 'all' ? 'All drives'
-      : d.label ? `${esc(d.label)} (${esc(d.path.replace(/\\$/, ''))})` : esc(d.path);
+    const name = d.kind === 'all' ? 'All drives' : driveName(d);
     const kind = { network: 'Network', removable: 'Removable', all: `${local.length} drives` }[d.kind] ?? '';
     return `<button class="drive" data-path="${esc(d.path)}">
         <span class="d-name">${DRIVE_ICON}${name}${kind ? `<span class="d-kind">${kind}</span>` : ''}</span>
