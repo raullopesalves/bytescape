@@ -26,6 +26,17 @@ $('elevate').addEventListener('click', () => {
   setStatus('Waiting for Windows to allow administrator rights…');
   invoke('relaunch_elevated', { path: lastPath }).catch((e) => setStatus(String(e), true));
 });
+$('basket-add').addEventListener('click', basketToggleSelection);
+$('nav-drives').addEventListener('click', (e) => {
+  const path = e.target.closest('[data-path]')?.dataset.path;
+  if (path) startScan(path);
+});
+$('address').addEventListener('click', (e) => {
+  const id = e.target.closest('button[data-id]')?.dataset.id;
+  if (id === undefined) return;
+  setView('tree');
+  revealInTree(Number(id)).then(() => $('scroller').focus());
+});
 $('reveal').addEventListener('click', () => {
   const id = currentId();
   if (id !== undefined) invoke('reveal', { id }).catch((e) => setStatus(String(e), true));
@@ -246,18 +257,18 @@ setInterval(() => {
   if (summary && map.dpr && window.devicePixelRatio !== map.dpr) layoutMap();
 }, 1000);
 
-// Drag the splitter to share the height between the tree and the treemap.
+// Drag the splitter to share the width between the list and the details pane.
 $('splitter').addEventListener('pointerdown', (e) => {
   const split = e.currentTarget;
   split.setPointerCapture(e.pointerId);
   split.classList.add('dragging');
-  const right = $('right').getBoundingClientRect();
+  const main = $('main').getBoundingClientRect();
   const move = (ev) => {
-    const h = Math.min(right.height - 160, Math.max(120, right.bottom - ev.clientY));
-    $('map-pane').style.height = `${h}px`;
+    const w = Math.min(main.width - 520, Math.max(240, main.right - ev.clientX));
+    $('details').style.width = `${w}px`;
   };
   const up = () => {
-    store.set('mapHeight', parseInt($('map-pane').style.height, 10));
+    store.set('detailsWidth', parseInt($('details').style.width, 10));
     split.classList.remove('dragging');
     split.removeEventListener('pointermove', move);
     split.removeEventListener('pointerup', up);
@@ -364,8 +375,8 @@ $('dupes').addEventListener('change', (e) => {
   renderDupes();
 });
 
-const savedMap = Number(store.get('mapHeight'));
-if (savedMap >= 120) $('map-pane').style.height = `${Math.min(savedMap, window.innerHeight - 320)}px`;
+const savedDetails = Number(store.get('detailsWidth'));
+if (savedDetails >= 240) $('details').style.width = `${Math.min(savedDetails, window.innerWidth - 600)}px`;
 
 markSortHeader();
 // Settings the scanner needs, before the first scan starts.

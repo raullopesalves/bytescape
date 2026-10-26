@@ -107,14 +107,14 @@ function setSort(key) {
 // resets); widths are remembered. The list scrolls sideways when the columns
 // don't fit.
 const COLS = {
-  name: { label: 'Name', w: 180, flex: 1, sort: 'name' },
+  name: { label: 'Name', w: 150, flex: 1, sort: 'name' },
   folder: { label: 'Folder', w: 160, flex: 1.3 },
   size: { label: 'Size', w: 84, num: true, sort: 'size' },
-  pct: { label: '% of parent', w: 120 },
+  pct: { label: '% of parent', w: 100 },
   alloc: { label: 'On disk', w: 84, num: true, sort: 'alloc' },
   files: { label: 'Files', w: 76, num: true, sort: 'files' },
   modified: { label: 'Modified', w: 92, num: true, sort: 'modified' },
-  category: { label: 'Category', w: 160, sort: 'category' },
+  category: { label: 'Category', w: 120, sort: 'category' },
 };
 const TREE_COLS = ['name', 'size', 'pct', 'alloc', 'files', 'modified', 'category'];
 const RESULT_COLS = ['name', 'folder', 'size', 'pct', 'alloc', 'files', 'modified', 'category'];
@@ -248,6 +248,7 @@ async function select(i, how = 'one') {
     if (visible[selected]?.row.id === id) {
       $('selpath').textContent = risk ? `${path}  ·  ${risk.reason}` : path;
       $('reveal').hidden = false;
+      showAddress(id);
     }
   } catch (e) {
     $('selpath').textContent = String(e);
@@ -279,6 +280,16 @@ function treeRowInBasket(i) {
 function isDriveRoot(id) {
   const row = visible.find((v) => v.row.id === id)?.row;
   return !!row && /^([A-Za-z]:\\|\\\\[^\\]+\\[^\\]+\\?)$/.test(row.name);
+}
+
+/** The address bar: the selected item's folders, each a link into the tree. */
+async function showAddress(id) {
+  syncBasketButton();
+  const chain = await invoke('ancestors', { id }).catch(() => []);
+  if (currentId() !== id) return;
+  $('address').innerHTML = chain.map(([aid, name], k) => (k === chain.length - 1
+    ? `<span class="here" title="${esc(name)}">${esc(name)}</span>`
+    : `<button data-id="${aid}" title="${esc(name)}">${esc(name)}</button><span class="sep">›</span>`)).join('');
 }
 
 /** Status bar for a selection of several rows. */

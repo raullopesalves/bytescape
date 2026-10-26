@@ -118,9 +118,9 @@ button {
     color var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 button:hover { background: var(--hover); }
-/* Press feedback; joined and menu buttons stay put. */
+/* Press feedback; menu items stay put. */
 button:active:not(:disabled) { transform: scale(.97); transition-duration: var(--dur-press); }
-.seg button:active, .menu button:active { transform: none; }
+.menu button:active { transform: none; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 ::selection { background: var(--select); color: var(--text); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); border-bottom-color: color-mix(in srgb, var(--accent), #000 25%); }
@@ -148,7 +148,27 @@ button.link:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 .status.error { color: var(--warn); }
-.toolbar-end { margin-left: auto; flex: none; }
+.status { flex: 1; min-width: 0; }
+/* Commands on the selection and the search box only make sense with results. */
+body:has(#main[hidden]) .main-only { display: none !important; }
+.cmd-sep { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--line); flex: none; }
+button.quiet { border-color: transparent; background: none; }
+button.quiet:hover { background: var(--hover); }
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 280px;
+  min-width: 140px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-bottom-color: var(--muted);
+  border-radius: var(--r);
+}
+.search:focus-within { border-bottom: 2px solid var(--accent); }
+.search input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: none; border: none; padding: 5px 0; outline: none; }
 .scan-stage { margin: -6px 0 12px; color: var(--muted); }
 /* Settings and About */
 .set { padding: 10px 0; border-top: 1px solid var(--line); }
@@ -174,15 +194,18 @@ main {
   min-height: 0;
 }
 
-.side {
-  width: 300px;
+/* Explorer-style shell: navigation pane, the list, a splitter, the details pane. */
+.nav {
+  width: 236px;
   flex: none;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 14px 14px 20px;
-  border-right: 1px solid var(--line);
-  background: var(--panel);
+  scrollbar-width: thin;
+  padding: 6px 10px 12px;
+  background: var(--bg);
 }
-.side h2 {
+.nav h2 {
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
@@ -232,7 +255,7 @@ main {
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 
 .note { color: var(--muted); font-size: 12px; margin-top: 14px; word-break: break-word; }
-.side h2 .count { font-weight: normal; }
+.nav h2 .count { font-weight: normal; }
 
 /* Cleanup basket: red, since what's in it is to be deleted. */
 .basket-box {
@@ -242,7 +265,7 @@ main {
   border-radius: 0 var(--r-card) var(--r-card) 0;
   background: var(--del-bg);
 }
-.side .basket-head { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--del-text); cursor: pointer; border-radius: 4px; }
+.nav .basket-head { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--del-text); cursor: pointer; border-radius: 4px; }
 .basket-head:hover .b-open, .basket-head:focus-visible .b-open { text-decoration: underline; }
 .basket-head .b-open { margin-left: auto; font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--accent); }
 /* Scrolls on its own, like the categories. */
@@ -347,6 +370,8 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
 }
 
 .tree {
@@ -358,21 +383,23 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 }
 
 .splitter {
-  height: 6px;
+  width: 5px;
   flex: none;
-  cursor: row-resize;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
+  cursor: col-resize;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
 }
 .splitter:hover, .splitter.dragging { background: var(--hover); }
 
 .map {
-  height: 45%;
-  min-height: 120px;
-  flex: none;
+  flex: 1;
+  min-height: 160px;
   display: flex;
   flex-direction: column;
   background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  overflow: hidden;
 }
 
 .crumbs {
@@ -448,23 +475,75 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 #f-ext { flex: 0 1 150px; }
 .filters label { display: flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
 
-.viewbar {
+
+.nav-views, .nav-drives { display: flex; flex-direction: column; gap: 1px; }
+.nav-views button, .nav-drives button, .nav-settings {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 6px 10px;
 }
-.viewbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.seg { display: flex; }
-.seg button { padding: 2px 10px; font-size: 12px; border-radius: 0; }
-.seg button { border-left: none; }
-.seg button:first-child { border-radius: var(--r) 0 0 var(--r); border-left: 1px solid var(--line); }
-.seg button:last-child { border-radius: 0 var(--r) var(--r) 0; }
+.nav-views button:hover, .nav-drives button:hover, .nav-settings:hover { background: var(--hover); }
+.nav-views button:active, .nav-drives button:active, .nav-settings:active { transform: none; }
+.nav-views svg, .nav-drives svg, .nav-settings svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.nav-views button.on, .nav-drives button.on { background: var(--select); font-weight: 600; }
+.nav-views button.on::before, .nav-drives button.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  height: 14px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.nav-drives button { flex-wrap: wrap; row-gap: 3px; }
+.nav-drives .nd-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-drives .nd-bar { flex-basis: 100%; height: 4px; margin-left: 26px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.nav-drives .nd-bar span { display: block; height: 100%; background: var(--accent); }
+.nav-drives .nd-bar span.full { background: var(--warn); }
+.nav-drives .nd-free { flex-basis: 100%; margin-left: 26px; font-size: 11px; font-weight: normal; color: var(--muted); }
+.nav .cats { max-height: none; overflow: visible; }
+.nav-settings { margin-top: auto; }
+.nav .note:empty { display: none; }
+
+/* The selected item's folders, like Explorer's address bar. */
+.address {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 34px;
+  margin: 6px 8px 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.address button { flex: 0 1 auto; min-width: 28px; border: none; background: none; padding: 2px 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.address button:hover { background: var(--hover); }
+.address .here { flex: 0 1 auto; min-width: 40px; color: var(--text); font-weight: 600; padding: 2px 6px; overflow: hidden; text-overflow: ellipsis; }
+.address .sep { opacity: .6; flex: none; }
+.f-summary { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.details {
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 12px 10px;
+  background: var(--bg);
+}
+.details .totals { flex: none; }
 
 /* A view fades in and rises 3px when shown (display none to shown restarts it). */
 .overview, .scroller { animation: view-in var(--dur-base) var(--ease-out); }
@@ -685,7 +764,6 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   #basket-count.bump { animation: none; }
   button:active:not(:disabled), .drive:hover { transform: none; }
 }
-.seg button.on { background: var(--panel); box-shadow: inset 0 -2px 0 var(--accent); color: var(--text); }
 
 .no-results { padding: 16px; color: var(--muted); }
 
@@ -776,7 +854,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 }
 .selpath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-@media (max-width: 1000px) {
-  .side { width: 240px; }
+@media (max-width: 1100px) {
+  .nav { width: 210px; }
 }
 

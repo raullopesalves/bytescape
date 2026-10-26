@@ -7,8 +7,13 @@
     <button id="cancel" hidden>Cancel</button>
     <button id="elevate" hidden title="Reads the drive's file table directly, which is several times faster. Windows asks for permission first.">Scan faster as administrator</button>
     <button id="update" class="update-btn" hidden>Update available</button>
+    <!-- Commands on the selection; shown with the results only (style.css). -->
+    <span class="cmd-sep main-only"></span>
+    <button id="basket-add" class="quiet main-only" title="Add the selected items to the cleanup basket, or take them out (B)">Add to basket</button>
+    <button id="export" class="quiet main-only" title="Save this folder's contents, or the search results, as CSV or JSON">Export…</button>
+    <button id="reveal" class="quiet main-only" hidden>Show in Explorer</button>
     <div id="status" class="status" aria-live="polite"></div>
-    <button id="settings" class="toolbar-end" title="Settings and About">Settings</button>
+    <label class="search main-only"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg><input id="f-name" type="search" placeholder="Search names (* and ? work too)" aria-label="Name"></label>
   </header>
 
   <div id="splash" class="splash" aria-hidden="true">
@@ -70,10 +75,18 @@
   </div>
 
   <main id="main" hidden>
-    <aside class="side">
-      <section class="totals" id="totals"></section>
-      <h2>By category</h2>
-      <ul class="cats" id="cats"></ul>
+    <nav class="nav" aria-label="Drives and views">
+      <h2>Drives</h2>
+      <div class="nav-drives" id="nav-drives"></div>
+      <h2>Views</h2>
+      <div class="nav-views" id="viewbar" role="tablist" aria-orientation="vertical">
+        <button data-view="overview" role="tab"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1.5" y="1.5" width="6" height="13" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>Overview</button>
+        <button data-view="tree" role="tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 3.5h12M5 8h9M5 12.5h9M2.5 6v6.5H4"/></svg>Folders</button>
+        <button data-view="results" role="tab" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>Results</button>
+        <button data-view="types" role="tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3"/></svg>File types</button>
+        <button data-view="history" role="tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>History</button>
+        <button data-view="dupes" role="tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.5" y="4.5" width="8" height="10" rx="1"/><path d="M5 4.5V1.5h9.5v9.5h-5"/></svg>Duplicates</button>
+      </div>
       <section class="basket-box" id="basket">
       <h2 class="basket-head" id="basket-open" role="button" tabindex="0" title="Open the basket in a bigger view"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M6 1h4l1 1h3v2H2V2h3zM3 5h10l-1 10H4z" fill="currentColor"/></svg> Cleanup basket <span id="basket-count" class="count"></span><span class="b-open">Open</span></h2>
       <p class="note" id="basket-empty">Right-click anything, or press B, to add it here (Ctrl+click or Shift+click picks several). Nothing is deleted until you review it.</p>
@@ -86,13 +99,16 @@
         </div>
       </div>
       </section>
+      <h2>By category</h2>
+      <ul class="cats" id="cats"></ul>
       <p class="note" id="rules-note"></p>
-    </aside>
+      <button id="settings" class="nav-settings" title="Settings and About"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>Settings</button>
+    </nav>
 
     <div class="right" id="right">
+      <nav class="address" id="address" aria-label="Location of the selected item"></nav>
       <section class="tree" aria-label="Folder tree">
         <div class="filters" id="filters" role="search">
-          <input id="f-name" type="search" placeholder="Search names (* and ? work too)" aria-label="Name">
           <input id="f-ext" type="text" placeholder="Extensions: mp4, mkv" aria-label="Extensions">
           <select id="f-min" aria-label="At least">
             <option value="">Any size</option>
@@ -123,20 +139,7 @@
           <label title="Also match folders (by name, total size, date and category)"><input type="checkbox" id="f-folders"> Folders</label>
           <label title="Show the matches inside their folders, like the tree, instead of one list by size"><input type="checkbox" id="f-group" checked> Group by folder</label>
           <button id="f-clear" class="link" hidden>Clear</button>
-        </div>
-        <div class="viewbar" id="viewbar">
-          <span id="f-summary" aria-live="polite"></span>
-          <div class="viewbar-right">
-            <button id="export" class="link" title="Save this folder's contents, or the search results, as CSV or JSON">Export…</button>
-            <div class="seg" role="tablist">
-              <button data-view="overview" role="tab">Overview</button>
-              <button data-view="tree" role="tab">Tree</button>
-              <button data-view="results" role="tab" hidden>Results</button>
-              <button data-view="types" role="tab">File types</button>
-              <button data-view="history" role="tab">History</button>
-              <button data-view="dupes" role="tab">Duplicates</button>
-            </div>
-          </div>
+          <span id="f-summary" class="f-summary" aria-live="polite"></span>
         </div>
         <div class="overview" id="overview" hidden></div>
         <div class="overview" id="history" hidden></div>
@@ -156,9 +159,12 @@
           <div id="rows"></div>
         </div>
       </section>
+    </div>
 
-      <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+    <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
 
+    <aside class="details" id="details" aria-label="Details">
+      <section class="totals" id="totals"></section>
       <section class="map" id="map-pane" aria-label="Treemap">
         <nav class="crumbs" id="crumbs" aria-label="Treemap location"></nav>
         <div class="map-wrap" id="map-wrap">
@@ -167,12 +173,11 @@
           <div class="tip" id="tip" hidden></div>
         </div>
       </section>
-    </div>
+    </aside>
   </main>
 
   <footer class="statusbar" id="statusbar" hidden>
     <span id="selpath" class="selpath"></span>
-    <button id="reveal" class="link" hidden>Show in Explorer</button>
   </footer>
   <div class="menu" id="menu" role="menu" hidden></div>
 
