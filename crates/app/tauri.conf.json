@@ -4,7 +4,8 @@
   "version": "0.1.4",
   "identifier": "io.github.raullopesalves.bytescape",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "ui",
+    "beforeBuildCommand": "cargo build --release --locked -p bytescape-cli"
   },
   "app": {
     "withGlobalTauri": true,

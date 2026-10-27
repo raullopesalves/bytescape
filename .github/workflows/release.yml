@@ -75,6 +75,10 @@ jobs:
         if: matrix.arch == 'x64'
         run: cargo test --locked
 
+      # Before the installer, which bundles it (crates/app/windows/hooks.nsh).
+      - name: Build the CLI
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bytescape-cli
+
       # Signs the installer for the in-app updater (the .sig goes into
       # latest.json). The key has no password. Without the key (a test build
       # before the secret exists) the installer is built unsigned.
@@ -86,9 +90,6 @@ jobs:
         run: |
           $sign = if ($env:TAURI_SIGNING_PRIVATE_KEY) { @("--config", "tauri.updater.conf.json") } else { @() }
           cargo tauri build --ci --target ${{ matrix.target }} @sign -- --locked
-
-      - name: Build the CLI
-        run: cargo build --release --locked --target ${{ matrix.target }} -p bytescape-cli
 
       - name: Collect the files
         run: |

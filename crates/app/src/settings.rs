@@ -127,6 +127,16 @@ pub fn reload_rules(app: AppHandle, state: State<AppState>) -> Result<Option<Str
     Ok(rules_error)
 }
 
+/// Path of bytescape-cli.exe next to the app (the installer puts it there),
+/// for the command-line guide; `None` when it isn't there.
+#[tauri::command]
+pub fn cli_path() -> Option<String> {
+    let cli = std::env::current_exe()
+        .ok()?
+        .with_file_name("bytescape-cli.exe");
+    cli.is_file().then(|| cli.to_string_lossy().into_owned())
+}
+
 /// Opens a page of the project's site in the browser (About).
 #[tauri::command]
 pub fn open_link(app: AppHandle, url: String) -> Result<(), String> {

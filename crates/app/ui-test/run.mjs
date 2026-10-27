@@ -213,6 +213,13 @@ await test('shortcuts and about', async () => {
   await js(`closeModal()`);
 });
 
+await test('command-line guide', async () => {
+  await js(`await openCli()`);
+  check('path and examples', await js(`return [$('modal-title').textContent, $('modal-body').querySelector('[data-copy]').dataset.copy, $('modal-body').querySelectorAll('.cli-line').length]`),
+    ['Command line', 'C:\\Users\\demo\\AppData\\Local\\Bytescape\\bytescape-cli.exe', 6]);
+  await js(`closeModal()`);
+});
+
 await test('window errors go to the log', async () => {
   await js(`setTimeout(() => { throw new Error('test error'); }, 0)`);
   await wait(200);

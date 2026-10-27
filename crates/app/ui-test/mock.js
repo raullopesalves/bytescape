@@ -307,6 +307,7 @@ window.__TAURI__ = {
         };
         case 'run_cleanup': mockCleanups.push(args.what); return true;
         case 'app_version': return '0.1.0';
+        case 'cli_path': return 'C:\\Users\\demo\\AppData\\Local\\Bytescape\\bytescape-cli.exe';
         case 'log_ui': mockLog.push(args.msg); return null;
         case 'open_log': mockActions.push('open_log'); return null;
         case 'set_exclude': mockExclude = args.exclude; return null;

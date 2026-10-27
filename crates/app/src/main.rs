@@ -303,6 +303,7 @@ fn main() {
             settings::run_cleanup,
             settings::shell_menu_state,
             settings::set_shell_menu,
+            settings::cli_path,
             log_ui,
             open_log,
             updates::check_update,

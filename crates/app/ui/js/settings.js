@@ -97,7 +97,7 @@ async function openSettings() {
       <p class="note">Your own rules ${rules ? `go in <code>${esc(rules[0])}</code>` : 'file'}. They add to the built-in ones.</p>
       <div class="row-of"><button id="set-rules-open">${rules?.[1] ? 'Open rules file' : 'Create rules file'}</button>
         <button id="set-rules-reload"${summary ? '' : ' disabled'}>Reload rules</button><span class="note" id="set-rules-said"></span></div></section>`,
-  [['Keyboard shortcuts', '', openShortcuts], ['About', '', openAbout], ['Close', 'primary', closeModal]]);
+  [['Command line', '', openCli], ['Keyboard shortcuts', '', openShortcuts], ['About', '', openAbout], ['Close', 'primary', closeModal]]);
   $('modal').querySelector('.modal-card').classList.add('wide');
   $('modal-body').onchange = async (e) => {
     const t = e.target;
@@ -183,6 +183,63 @@ document.addEventListener('keydown', (e) => {
     openShortcuts();
   }
 });
+
+// The command-line guide: where bytescape-cli is, examples to copy, the options.
+const CLI_EXAMPLES = [
+  ['Scan a folder or drive: totals, categories, the largest folders and files, file types', 'C:\\Windows'],
+  ['List the 25 largest of each', '--top 25 D:\\'],
+  ['Save the tree as JSON, three folder levels deep', '--json scan.json --depth 3 D:\\'],
+  ['Every local drive, leaving out node_modules folders', '--all-drives --exclude node_modules'],
+  ['Every option', '--help'],
+];
+const CLI_OPTIONS = [
+  ['--top N', 'How many folders, files and types to list (15)'],
+  ['--json FILE', 'Save the tree as JSON'],
+  ['--depth N', 'Folder levels in the JSON (4)'],
+  ['--min-size BYTES', 'Leave smaller entries out of the JSON (1 MB)'],
+  ['--all-drives', 'Scan every local drive instead of a path'],
+  ['--exclude NAME_OR_PATH', 'Leave out a folder by name or full path; repeat for more'],
+  ['--rules FILE', 'Your own category rules, after the built-in ones'],
+  ['--method auto|walk|mft', 'How to read the drive; auto reads a whole drive\'s file table when run as administrator'],
+  ['--threads N', 'Worker threads (one per CPU)'],
+  ['--no-hardlinks', 'Count hardlinked files every time'],
+  ['--show-errors', 'List everything that couldn\'t be read'],
+];
+
+async function openCli() {
+  const path = await invoke('cli_path').catch(() => null);
+  const run = path ? `& "${path}"` : 'bytescape-cli';
+  const copyLine = (text) => `<div class="cli-line"><code>${esc(text)}</code><button data-copy="${esc(text)}">Copy</button></div>`;
+  modal('Command line', `
+    <p class="note">bytescape-cli scans from a terminal with the same scanner and category rules as the app, and prints what it found. It's installed with Bytescape and updates with it.</p>
+    <section class="set"><h3>Where it is</h3>
+      ${path ? copyLine(path) : '<p class="note">It isn\'t next to the app, so this copy of Bytescape may not have been installed with it. Download bytescape-cli from the <button class="link" data-link="/releases">releases page</button>.</p>'}
+    </section>
+    <section class="set"><h3>Try it in PowerShell</h3>
+      ${CLI_EXAMPLES.map(([what, args]) => `<p class="note">${esc(what)}</p>${copyLine(`${run} ${args}`)}`).join('')}
+      <p class="note">Run PowerShell as administrator to scan a whole drive several times faster.</p>
+    </section>
+    <section class="set"><h3>Options</h3>
+      <table class="keys">${CLI_OPTIONS.map(([k, what]) => `<tr><th><code>${esc(k)}</code></th><td>${esc(what)}</td></tr>`).join('')}</table>
+    </section>`,
+  [['Close', 'primary', closeModal]]);
+  $('modal').querySelector('.modal-card').classList.add('wide');
+  $('modal-body').onclick = async (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      try {
+        await navigator.clipboard.writeText(copy.dataset.copy);
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+      } catch (err) {
+        setStatus(`Couldn't copy: ${err}`, true);
+      }
+      return;
+    }
+    const link = e.target.closest('[data-link]')?.dataset.link;
+    if (link !== undefined) invoke('open_link', { url: `https://github.com/raullopesalves/bytescape${link}` }).catch((err) => setStatus(String(err), true));
+  };
+}
 
 function openAbout() {
   const link = (path, label) => `<button class="link" data-link="${path}">${label}</button>`;
