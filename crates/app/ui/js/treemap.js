@@ -92,11 +92,12 @@ function rgba(color) {
   return c;
 }
 
-// Each tile is a soft pillow lit from the top left: one parabolic ridge
-// across the tile (the cushion of van Wijk and van de Wetering, 1999, without
-// the ancestors' ridges), so tiles read as separate, rounded blocks and the
-// gaps and frames show the nesting.
-const CUSHION = { height: 0.25, ambient: 0.78, diffuse: 0.38 };
+// Cushion shading, after van Wijk and van de Wetering, "Cushion Treemaps"
+// (1999): each level of folders adds a parabolic ridge across its block, so
+// a block's surface is the sum of its ancestors' ridges and its own, and the
+// light (from the top left) shows the nesting as bumps on bumps. A high
+// ambient keeps it soft: edges darken a little, never to black.
+const CUSHION = { height: 0.18, falloff: 0.75, ambient: 0.5, diffuse: 0.6 };
 const LIGHT = (() => {
   const l = [-1, -1, 3];
   const n = Math.hypot(...l);
@@ -110,9 +111,9 @@ function drawMap() {
   const frames = [cssVar('--map-frame-a'), cssVar('--map-frame-b')];
   ctx.fillStyle = cssVar('--map-bg');
   ctx.fillRect(0, 0, W, H);
-  // Open folders at the first level get a faint frame behind their contents;
-  // deeper ones only show as groups of tiles.
-  const deepest = map.depth[0] + 1;
+  // Open folders at the first two levels are frames behind their contents;
+  // below that the cushions show the nesting.
+  const deepest = map.depth[0] + 2;
   for (let i = 0; i < map.n; i++) {
     if (map.kind[i] === K_DIR && !isCollapsed(i) && map.depth[i] <= deepest) {
       ctx.fillStyle = frames[map.depth[i] % 2];
@@ -127,20 +128,28 @@ function drawMap() {
   const dim = rgba(cssVar('--map-dim'));
   const other = rgba(cssVar('--map-other'));
   const colours = new Map(); // category id -> [r, g, b, a]
+  // Surface coefficients per depth on the path to the current block:
+  // z(x) = s2x·x² + s1x·x, and the same for y.
+  const surf = new Float64Array(257 * 4);
   const [lx, ly, lz] = LIGHT;
   const dpr = map.dpr || 1;
-  const gap = Math.max(1, Math.round(2 * dpr));
+  const d0 = map.depth[0];
   for (let i = 0; i < map.n; i++) {
+    const x = map.x[i], y = map.y[i], w = map.w[i], h = map.h[i];
+    const d = map.depth[i];
+    const at = (d + 1) * 4, up = d * 4; // slot d + 1; the parent's is slot d
+    let s1x = d ? surf[up] : 0, s2x = d ? surf[up + 1] : 0;
+    let s1y = d ? surf[up + 2] : 0, s2y = d ? surf[up + 3] : 0;
+    const ridge = CUSHION.height * CUSHION.falloff ** (d - d0);
+    if (w > 0) { s1x += (4 * ridge * (2 * x + w)) / w; s2x -= (4 * ridge) / w; }
+    if (h > 0) { s1y += (4 * ridge * (2 * y + h)) / h; s2y -= (4 * ridge) / h; }
+    surf[at] = s1x; surf[at + 1] = s2x; surf[at + 2] = s1y; surf[at + 3] = s2y;
+
     const kind = map.kind[i];
     if (kind === K_DIR && !isCollapsed(i)) continue;
     // Leaves: files, folders too small to open, and "smaller items" blocks.
-    // A gap on the right and bottom keeps neighbours apart.
-    const x = map.x[i], y = map.y[i];
-    const w = map.w[i] > 3 * gap ? map.w[i] - gap : map.w[i];
-    const h = map.h[i] > 3 * gap ? map.h[i] - gap : map.h[i];
-    if (w <= 0 || h <= 0) continue;
-    const s1x = (4 * CUSHION.height * (2 * x + w)) / w, s2x = -(4 * CUSHION.height) / w;
-    const s1y = (4 * CUSHION.height * (2 * y + h)) / h, s2y = -(4 * CUSHION.height) / h;
+    // Leave a 1 px seam on the right and bottom so neighbours stay apart.
+    const gw = w >= 3 ? w - 1 : w, gh = h >= 3 ? h - 1 : h;
     let base = other;
     if (kind <= K_REST && cats.has(map.cat[i])) {
       base = colours.get(map.cat[i]);
@@ -149,10 +158,10 @@ function drawMap() {
     // A veil over the block: "smaller items", or no match while filtering.
     const veil = map.dim[i] ? dim : kind === K_REST ? rest : null;
     const va = veil ? veil[3] : 0;
-    const x0 = Math.max(0, Math.round(x)), x1 = Math.min(W, Math.round(x + w));
-    const y0 = Math.max(0, Math.round(y)), y1 = Math.min(H, Math.round(y + h));
-    // Rounded corners, 2 CSS px, on tiles big enough to show them.
-    const rad = x1 - x0 > 8 * dpr && y1 - y0 > 8 * dpr ? 2 * dpr : 0;
+    const x0 = Math.max(0, Math.round(x)), x1 = Math.min(W, Math.round(x + gw));
+    const y0 = Math.max(0, Math.round(y)), y1 = Math.min(H, Math.round(y + gh));
+    // Rounded corners (2 CSS px) only on big tiles: on small ones they read as pebbles.
+    const rad = x1 - x0 >= 24 * dpr && y1 - y0 >= 24 * dpr ? 2 * dpr : 0;
     for (let py = y0; py < y1; py++) {
       const cy = py < y0 + rad ? y0 + rad - py - 0.5 : py >= y1 - rad ? py - (y1 - rad) + 0.5 : 0;
       const inset = cy > 0 ? Math.round(rad - Math.sqrt(Math.max(0, rad * rad - cy * cy))) : 0;
@@ -173,6 +182,14 @@ function drawMap() {
     }
   }
   ctx.putImageData(img, 0, 0);
+  // A clear border around each first-level block, so the big folders stand apart.
+  ctx.strokeStyle = cssVar('--map-bg');
+  ctx.lineWidth = 2 * dpr;
+  for (let i = 1; i < map.n; i++) {
+    if (map.depth[i] === d0 + 1 && map.w[i] > 4 * dpr && map.h[i] > 4 * dpr) {
+      ctx.strokeRect(map.x[i] + dpr, map.y[i] + dpr, map.w[i] - 2 * dpr, map.h[i] - 2 * dpr);
+    }
+  }
 }
 
 /** Rectangle of the tree's selected node, or of its nearest drawn ancestor. */
@@ -240,35 +257,32 @@ function fitText(ctx, text, width) {
   return `${text.slice(0, n)}…`;
 }
 
-/** True if text on this tile's colour should be dark (WCAG relative luminance). */
-function lightTile(i) {
-  const c = rgba(cats.has(map.cat[i]) ? colorOf(cats.get(map.cat[i])) : cssVar('--map-other'));
-  const lin = (v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-  return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]) > 0.3;
-}
-
 function drawLabels(ctx, dpr) {
   const font = '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
-  ctx.save();
   ctx.textBaseline = 'alphabetic';
-  ctx.shadowBlur = 3 * dpr;
-  ctx.shadowOffsetY = 1 * dpr;
   for (const i of labelRects()) {
     const d = map.details.get(map.id[i]);
     if (!d) continue;
-    const x = map.x[i] + 7 * dpr, y = map.y[i] + 6 * dpr;
-    const room = map.w[i] - 16 * dpr;
-    // Dark text on light tiles (lime, yellow, light grey), white on the rest.
-    const dark = lightTile(i);
-    ctx.shadowColor = dark ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.7)';
-    ctx.fillStyle = dark ? '#161616' : '#ffffff';
+    const pad = 6 * dpr;
+    const room = map.w[i] - 8 * dpr - 2 * pad;
     ctx.font = `600 ${12 * dpr}px ${font}`;
-    ctx.fillText(fitText(ctx, d.row.name, room), x, y + 12 * dpr);
-    ctx.fillStyle = dark ? 'rgba(22, 22, 22, 0.8)' : 'rgba(255, 255, 255, 0.88)';
+    const name = fitText(ctx, d.row.name, room);
+    const nw = ctx.measureText(name).width;
     ctx.font = `${11 * dpr}px ${font}`;
-    ctx.fillText(human(d.row.size), x, y + 26 * dpr);
+    const size = human(d.row.size);
+    const sw = ctx.measureText(size).width;
+    const x = map.x[i] + 4 * dpr, y = map.y[i] + 4 * dpr;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, Math.max(nw, sw) + 2 * pad, 34 * dpr, 4 * dpr);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${12 * dpr}px ${font}`;
+    ctx.fillText(name, x + pad, y + 15 * dpr);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.font = `${11 * dpr}px ${font}`;
+    ctx.fillText(size, x + pad, y + 28 * dpr);
   }
-  ctx.restore();
 }
 
 /** The block at the map's first level that holds rectangle i (ancestors come first). */

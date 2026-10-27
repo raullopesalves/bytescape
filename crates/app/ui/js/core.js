@@ -19,7 +19,7 @@ const COLORS = {
   violet: '#7c5ce6', rose: '#e05a78', amber: '#e8a33c', pink: '#d96bb0',
   blue: '#4a86e8', orange: '#e9773a', slate: '#7b8794', purple: '#a35ad6',
   teal: '#38aaa0', cyan: '#3bb4d6', lime: '#8cc63f', indigo: '#5b6ad6',
-  gray: '#9aa0a6', green: '#4caf6a', zinc: '#b0b0b8', red: '#e04848',
+  gray: '#7c8288', green: '#4caf6a', zinc: '#8b8d96', red: '#e04848',
   yellow: '#e8c93c', sky: '#4fb3f0', brown: '#a0703c',
 };
 
