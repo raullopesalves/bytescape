@@ -31,6 +31,8 @@ fn default_rules() {
             ("D:/vm/disk.vhdx", false, "disk-images"),
             ("C:/src/proj/main.rs", false, "code"),
             ("C:/Users/r/Downloads/setup.exe", false, "programs"),
+            ("D:/Modlists/LoreRim/mods/Armor/Armor.BSA", false, "game-mods"),
+            ("D:/Modlists/LoreRim/mods/Armor/textures/a.dds", false, "game-mods"),
             // No match: files fall back, folders get nothing.
             ("C:/Users/r/notes", false, "other"),
             ("C:/Users/r/.gitignore", false, "other"),
@@ -92,7 +94,7 @@ fn default_rules_metadata() {
     let caches = rules.category(rules.id_of("caches").unwrap()).unwrap();
     assert_eq!(caches.name, "Caches and temp");
     assert_eq!(caches.cleanup, Cleanup::Safe);
-    assert_eq!(rules.categories().len(), 15);
+    assert_eq!(rules.categories().len(), 16);
 }
 
 #[test]

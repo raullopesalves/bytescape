@@ -243,7 +243,9 @@ async function select(i, how = 'one') {
   drawOverlay();
   if (marked.size > 1) return showMany(marked.size, treeMarkedBytes());
   showSelected(visible[i].row, visible[i].parentSize);
-  const risk = visible[i].row.risk;
+  const r = visible[i].row;
+  followSelection(r.kind === 'dir' && r.children > 0 ? r.id : visible[Math.max(0, parentIndex(i))].row.id);
+  const risk = r.risk;
   try {
     const path = await invoke('node_path', { id });
     if (visible[selected]?.row.id === id) {

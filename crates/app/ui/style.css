@@ -327,9 +327,10 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .fail-list li { margin-bottom: 4px; word-break: break-all; }
 .note.error { color: var(--warn); }
 
+/* The list keeps its width (the splitter sets it); the map gets the rest. */
 .right {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 var(--list-w, 840px);
+  min-width: 420px;
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -510,8 +511,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .filters { margin-top: 6px; }
 
 .details {
-  width: 320px;
-  flex: none;
+  flex: 1 0 320px;
   display: flex;
   flex-direction: column;
   gap: 10px;

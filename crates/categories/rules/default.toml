@@ -42,6 +42,15 @@ paths = [
     "**/.minecraft/**",
 ]
 
+# Mod files for Bethesda games and others: archives, plugins, meshes,
+# textures, animations and compiled scripts.
+[[category]]
+id = "game-mods"
+name = "Game mods"
+color = "yellow"
+cleanup = "never"
+extensions = ["bsa", "ba2", "esp", "esm", "esl", "nif", "dds", "hkx", "pex", "tri", "fuz", "lip", "bik"]
+
 [[category]]
 id = "videos"
 name = "Videos"

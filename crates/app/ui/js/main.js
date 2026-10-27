@@ -202,7 +202,7 @@ overlay.addEventListener('click', (e) => {
   const { i } = eventRect(e);
   if (i < 0) return;
   setView('tree');
-  revealInTree(map.id[i]);
+  revealInTree(map.id[topBlock(i)]);
 });
 overlay.addEventListener('contextmenu', (e) => {
   const { i } = eventRect(e);
@@ -245,13 +245,13 @@ $('splitter').addEventListener('pointerdown', (e) => {
   const split = e.currentTarget;
   split.setPointerCapture(e.pointerId);
   split.classList.add('dragging');
-  const main = $('main').getBoundingClientRect();
+  const left = $('right').getBoundingClientRect().left;
+  const most = $('main').getBoundingClientRect().right - 325 - left; // the details pane keeps 320 px
   const move = (ev) => {
-    const w = Math.min(main.width - 520, Math.max(240, main.right - ev.clientX));
-    $('details').style.width = `${w}px`;
+    $('right').style.flexBasis = `${Math.round(Math.min(most, Math.max(420, ev.clientX - left)))}px`;
   };
   const up = () => {
-    store.set('detailsWidth', parseInt($('details').style.width, 10));
+    store.set('listWidth', parseInt($('right').style.flexBasis, 10));
     split.classList.remove('dragging');
     split.removeEventListener('pointermove', move);
     split.removeEventListener('pointerup', up);
@@ -358,8 +358,8 @@ $('dupes').addEventListener('change', (e) => {
   renderDupes();
 });
 
-const savedDetails = Number(store.get('detailsWidth'));
-if (savedDetails >= 240) $('details').style.width = `${Math.min(savedDetails, window.innerWidth - 600)}px`;
+const savedList = Number(store.get('listWidth'));
+if (savedList >= 420) $('right').style.flexBasis = `${savedList}px`;
 
 markSortHeader();
 // Settings the scanner needs, before the first scan starts.

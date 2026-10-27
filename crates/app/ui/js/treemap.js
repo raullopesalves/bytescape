@@ -52,7 +52,7 @@ async function layoutMap() {
   const seq = ++map.seq;
   const buf = await invoke('treemap', {
     id: map.root, width, height,
-    minArea: 6 * dpr * dpr, // merge items under ~6 square CSS pixels
+    minArea: 40 * dpr * dpr, // merge items under ~40 square CSS pixels into "smaller items"
     pad: Math.max(1, Math.round(dpr)),
   });
   if (seq !== map.seq) return; // a newer layout was requested meanwhile
@@ -65,6 +65,7 @@ async function layoutMap() {
   map.hover = -1;
   drawMap();
   drawOverlay();
+  loadLabels();
 }
 
 function cssVar(name) {
@@ -109,9 +110,11 @@ function drawMap() {
   const frames = [cssVar('--map-frame-a'), cssVar('--map-frame-b')];
   ctx.fillStyle = cssVar('--map-bg');
   ctx.fillRect(0, 0, W, H);
-  // Open folders are frames behind their contents.
+  // Open folders are frames behind their contents; below two levels the
+  // cushions show the nesting, and more frames are only noise.
+  const deepest = map.depth[0] + 2;
   for (let i = 0; i < map.n; i++) {
-    if (map.kind[i] === K_DIR && !isCollapsed(i)) {
+    if (map.kind[i] === K_DIR && !isCollapsed(i) && map.depth[i] <= deepest) {
       ctx.fillStyle = frames[map.depth[i] % 2];
       ctx.fillRect(map.x[i], map.y[i], map.w[i], map.h[i]);
     }
@@ -196,6 +199,7 @@ function drawOverlay() {
     ctx.strokeStyle = color;
     ctx.strokeRect(map.x[i] + lw / 2, map.y[i] + lw / 2, Math.max(0, map.w[i] - lw), Math.max(0, map.h[i] - lw));
   };
+  drawLabels(ctx, dpr);
   ctx.setLineDash([4 * dpr, 3 * dpr]);
   for (const id of basketIds) {
     const r = map.index.get(id);
@@ -209,6 +213,78 @@ function drawOverlay() {
     outline(sel, '#ffffff', 2);
   }
   if (map.hover > 0 && map.hover !== sel) outline(map.hover, 'rgba(255,255,255,0.85)', 1.5);
+}
+
+// Names and sizes on the map's first-level blocks, where they fit.
+const LABEL = { w: 72, h: 40 }; // CSS pixels a block needs for its label
+
+function labelRects() {
+  const out = [];
+  const want = map.depth[0] + 1;
+  for (let i = 1; i < map.n; i++) {
+    if (map.depth[i] === want && map.kind[i] !== K_REST && map.w[i] >= LABEL.w * map.dpr && map.h[i] >= LABEL.h * map.dpr) out.push(i);
+  }
+  return out;
+}
+
+/** Fetches the names the labels need, then draws them. */
+async function loadLabels() {
+  const seq = map.seq;
+  await Promise.all(labelRects().map((i) => details(map.id[i]).catch(() => null)));
+  if (seq === map.seq) drawOverlay();
+}
+
+/** `text`, cut short with an ellipsis to fit `width`. */
+function fitText(ctx, text, width) {
+  if (ctx.measureText(text).width <= width) return text;
+  let n = text.length;
+  while (n > 1 && ctx.measureText(`${text.slice(0, n)}…`).width > width) n--;
+  return `${text.slice(0, n)}…`;
+}
+
+function drawLabels(ctx, dpr) {
+  const font = '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  for (const i of labelRects()) {
+    const d = map.details.get(map.id[i]);
+    if (!d) continue;
+    const pad = 6 * dpr;
+    const room = map.w[i] - 4 * dpr - 2 * pad;
+    ctx.font = `600 ${12 * dpr}px ${font}`;
+    const name = fitText(ctx, d.row.name, room);
+    const nw = ctx.measureText(name).width;
+    ctx.font = `${11 * dpr}px ${font}`;
+    const size = human(d.row.size);
+    const sw = ctx.measureText(size).width;
+    const x = map.x[i] + 3 * dpr, y = map.y[i] + 3 * dpr;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, Math.max(nw, sw) + 2 * pad, 34 * dpr, 4 * dpr);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${12 * dpr}px ${font}`;
+    ctx.fillText(name, x + pad, y + 15 * dpr);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.font = `${11 * dpr}px ${font}`;
+    ctx.fillText(size, x + pad, y + 28 * dpr);
+  }
+}
+
+/** The block at the map's first level that holds rectangle i (ancestors come first). */
+function topBlock(i) {
+  const want = map.depth[0] + 1;
+  for (let j = i; j > 0; j--) if (map.depth[j] === want) return j;
+  return i;
+}
+
+/** The map shows the selected folder, or the folder a selected file is in. */
+let followTimer = 0;
+function followSelection(id) {
+  clearTimeout(followTimer);
+  // Waits a moment, so arrowing through the tree doesn't lay out every row.
+  followTimer = setTimeout(() => {
+    if (summary && id !== map.root) zoomTo(id);
+  }, 150);
 }
 
 /** The deepest rectangle under a canvas pixel. Children follow their parents. */
