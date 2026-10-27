@@ -1,8 +1,8 @@
 # Bytescape
 
 A disk usage analyzer for Windows. It shows what takes up space on a drive or
-folder, groups everything into categories (games, videos, caches, developer
-dependencies, ...), and helps you clean up safely.
+folder, groups everything into categories (games, game mods, videos, caches,
+developer dependencies, ...), and helps you clean up safely.
 
 ![The overview of a scanned drive, with the category-coloured treemap](docs/screenshots/overview.png)
 
@@ -15,8 +15,10 @@ downloads WebView2 if Windows doesn't have it. The files aren't code-signed
 yet, so SmartScreen may say "Windows protected your PC": choose **More info**,
 then **Run anyway**.
 
-Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
-(no install), the command-line tool, and SHA-256 checksums.
+The installer also puts the command-line tool, `bytescape-cli.exe`, next to
+the app (see [Command line](#command-line)). Each release also has a
+standalone `Bytescape_<version>_x64_portable.exe` (no install), the
+command-line tool on its own, and SHA-256 checksums.
 
 ## What it does
 
@@ -27,12 +29,18 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
 - **Categories.** Every file gets a category from rules you can extend (see
   [Categories](#categories)). Folders deep inside others win, so
   `C:\Windows\Temp` counts as caches, not as Windows.
-- **Tree and treemap.** A sortable folder tree next to a treemap coloured by
-  category. Click either one to find the item in the other; double-click to
-  zoom into a folder.
-- **Search and filters** by name (with `*` and `?`), extension, size, age and
-  category, grouped by folder (with the number of matches in each) or as one
-  list by size. The treemap dims everything that doesn't match.
+- **A window laid out like Explorer.** Drives and views in a navigation pane
+  on the left, a sortable folder tree in the middle with an address bar of
+  the selected item's folders, and a details pane on the right: the
+  selected item's size, share of its folder, size on disk, date and
+  category, above the treemap. Light and dark themes in the Windows 11 style.
+- **Treemap** coloured by category. It shows the selected folder (or the
+  selected file's folder), with names and sizes on the biggest blocks; click a
+  block to open it, and step back out with the breadcrumb above the map.
+- **Search and filters** by name (with `*` and `?`) in the command bar, and
+  by extension, size, age and category behind the Filters button. Results are
+  grouped by folder (with the number of matches in each) or shown as one list
+  by size. The treemap dims everything that doesn't match.
 - **Flags** on anything that probably shouldn't be deleted by hand: Windows,
   program and boot folders, registry files, AppData, OneDrive.
 - **Overview** after each scan: where the space goes, how much is in
@@ -44,7 +52,8 @@ Each release also has a standalone `Bytescape_<version>_x64_portable.exe`
 - **Cleanup basket.** Collect what you want to remove (select several rows
   with Ctrl+click, Shift+click, Shift+arrows or Ctrl+A, then press B or
   Delete, or right-click), review it with a warning for anything risky, then move it to the Recycle Bin (or delete it
-  for good, if you ask twice).
+  for good, if you ask twice). The Basket row in the navigation pane shows
+  its count and size.
 - **File types:** totals per extension, coloured by category; click one to
   see those files.
 - **Windows cleanup:** empty the Recycle Bin, turn off hibernation, clean up
@@ -142,6 +151,23 @@ cleanup = "never"
 paths = ["?:/Users/*/Documents/Work/**"]
 ```
 
+## Command line
+
+`bytescape-cli` scans from a terminal with the same scanner and category
+rules as the app. It prints a summary, the categories, the largest items and
+files, and the file types, and can write the tree as JSON (`--depth` sets
+how many folder levels). The installer
+puts it next to `bytescape.exe`, so it updates and uninstalls with the app;
+**Settings > Command line** shows where it is, with examples to copy.
+
+```
+bytescape-cli C:\Windows
+bytescape-cli --top 25 --json scan.json D:\
+bytescape-cli --all-drives --exclude node_modules
+```
+
+Run `bytescape-cli --help` for every option.
+
 ## Coming from diskmap
 
 Bytescape was called diskmap during development. On its first start it moves
@@ -170,7 +196,8 @@ cd crates/app
 cargo tauri build
 ```
 
-The installer is written to `target/release/bundle/nsis/`. It installs for the
+This builds `bytescape-cli` first and puts it in the installer. The installer
+is written to `target/release/bundle/nsis/`. It installs for the
 current user, without administrator rights, and downloads WebView2 if it is
 missing. It is not code-signed yet, so Windows SmartScreen warns about it.
 
