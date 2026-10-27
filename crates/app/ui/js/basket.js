@@ -74,7 +74,6 @@ async function basketToggleMany(ids, skippedRoot) {
   setStatus(`Added ${plural(ids.length, 'item')} to the cleanup basket.${insideNote}${rootNote}`);
 }
 
-const BASKET_SIDE = 100;  // rows in the side panel
 const BASKET_BIG = 1000;  // rows in the big view and the delete dialog
 
 let basketShown = 0; // items in the last render, to bump the count when it grows
@@ -82,13 +81,13 @@ let basketShown = 0; // items in the last render, to bump the count when it grow
 /** The command bar's basket button says what B does to the item at the cursor. */
 function syncBasketButton() {
   const id = currentId();
-  $('basket-add').textContent = id !== undefined && basketIds.has(id) ? 'Take out of basket' : 'Add to basket';
+  $('basket-add-label').textContent = id !== undefined && basketIds.has(id) ? 'Take out of basket' : 'Add to basket';
 }
 
 function renderBasket() {
   const b = basket;
   const count = $('basket-count');
-  count.textContent = b.items.length ? `(${b.items.length})` : '';
+  count.textContent = b.items.length ? `${fmtInt(b.items.length)} · ${human(b.bytes)}` : '';
   if (b.items.length > basketShown) {
     count.classList.remove('bump');
     void count.offsetWidth; // restart the animation
@@ -96,19 +95,6 @@ function renderBasket() {
   }
   basketShown = b.items.length;
   syncBasketButton();
-  $('basket-empty').hidden = b.items.length > 0;
-  $('basket-foot').hidden = b.items.length === 0;
-  // Drawing tens of thousands of rows is slow; the big view has more.
-  const more = b.items.length - BASKET_SIDE;
-  $('basket-items').innerHTML = b.items.slice(0, BASKET_SIDE).map((it) => `<li class="lvl-${it.level}" data-id="${it.id}" title="${esc(it.path)}">
-      <div class="b-head"><span class="b-dot"></span><span class="b-name">${esc(it.name)}</span>
-        <span class="b-size">${human(it.size)}</span><button class="b-x" data-remove="${it.id}" title="Take out of the basket" aria-label="Take ${esc(it.name)} out of the basket">×</button></div>
-      ${it.reason ? `<div class="b-reason">${esc(it.reason)}</div>` : ''}
-    </li>`).join('') + (more > 0 ? `<li class="b-more" data-open-basket>…and ${fmtInt(more)} more. Open the basket to see them.</li>` : '');
-  $('basket-total').textContent = b.count
-    ? `${plural(b.count, 'item')} · ${human(b.bytes)}`
-    : 'Nothing here can be deleted.';
-  $('basket-delete').disabled = b.count === 0;
   if (basketOpen) {
     const body = $('modal-body');
     const top = body.scrollTop;

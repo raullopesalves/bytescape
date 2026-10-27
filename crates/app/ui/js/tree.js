@@ -180,7 +180,7 @@ function rowHtml(i) {
   const hits = shownTree === 'groups' && r.kind === 'dir' && !r.hit
     ? `<span class="hits" title="Matching files in it">(${fmtInt(r.files)})</span>` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="treeitem" aria-level="${depth + 1}"${r.kind === 'dir' && r.children > 0 ? ` aria-expanded="${open}"` : ''}>
-    <div class="name-cell" style="padding-left:${4 + depth * 16}px"><span class="twisty">${twisty}</span>${riskHtml(r)}<span class="label" title="${esc(r.name)}">${esc(r.name)}</span>${hits}${tagHtml}</div>
+    <div class="name-cell" style="padding-left:${4 + depth * 16}px"><span class="twisty">${twisty}</span>${riskHtml(r)}${iconOf(r)}<span class="label" title="${esc(r.name)}">${esc(r.name)}</span>${hits}${tagHtml}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
     <div class="num">${human(r.alloc)}</div>
@@ -242,6 +242,7 @@ async function select(i, how = 'one') {
   render();
   drawOverlay();
   if (marked.size > 1) return showMany(marked.size, treeMarkedBytes());
+  showSelected(visible[i].row, visible[i].parentSize);
   const risk = visible[i].row.risk;
   try {
     const path = await invoke('node_path', { id });
@@ -292,10 +293,30 @@ async function showAddress(id) {
     : `<button data-id="${aid}" title="${esc(name)}">${esc(name)}</button><span class="sep">›</span>`)).join('');
 }
 
-/** Status bar for a selection of several rows. */
+/** The details pane: what the selected item is, and its main actions. */
+function showSelected(r, parentSize) {
+  const pct = parentSize > 0 ? (r.size * 100) / parentSize : 0;
+  const cat = cats.get(r.category);
+  const facts = [
+    `${pct.toFixed(1)}% of ${flat() ? 'everything scanned' : 'its folder'}`,
+    r.kind === 'dir' ? plural(r.files, 'file') : '',
+    `${human(r.alloc)} on disk`,
+    r.modified ? `modified ${fmtDate(r.modified)}` : '',
+  ].filter(Boolean).join(' · ');
+  $('selinfo').innerHTML = `<div class="si-name" title="${esc(r.name)}">${iconOf(r)}<span>${esc(r.name)}</span></div>
+    <div class="si-size">${human(r.size)}</div>
+    <div class="si-facts">${facts}</div>
+    ${cat ? `<div class="si-cat"><span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}</div>` : ''}
+    <div class="si-acts"><button data-act="open">${r.kind === 'dir' ? 'Open in Explorer' : 'Open'}</button><button data-act="properties">Properties</button></div>`;
+}
+
+/** Status bar and details pane for a selection of several rows. */
 function showMany(n, bytes) {
-  $('selpath').textContent = `${fmtInt(n)} items selected${bytes === undefined ? '' : ` · ${human(bytes)}`}`;
+  const what = `${fmtInt(n)} items selected`;
+  $('selpath').textContent = `${what}${bytes === undefined ? '' : ` · ${human(bytes)}`}`;
   $('reveal').hidden = true;
+  $('selinfo').innerHTML = `<div class="si-name"><span>${what}</span></div>${bytes === undefined ? '' : `<div class="si-size">${human(bytes)}</div>`}`;
+  syncBasketButton();
 }
 
 /** How a click or key with these modifiers changes the selection. */

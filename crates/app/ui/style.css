@@ -232,23 +232,6 @@ main {
 .du-used { background: var(--bar); }
 .du-scan { background: var(--accent); }
 
-/* Scrolls on its own, so the basket below stays in view. */
-.cats { list-style: none; margin: 0 -6px; padding: 0 6px; max-height: 36vh; overflow-y: auto; }
-.cats li { padding: 6px; margin: 0 -6px; border-bottom: 1px solid var(--line); cursor: pointer; border-radius: var(--r); }
-.cats li:last-child { border-bottom: none; }
-.cats li:hover { background: var(--hover); }
-.cats li.on { background: linear-gradient(var(--accent), var(--accent)) 3px 50% / 3px 14px no-repeat, var(--select); }
-.cat-head { display: flex; align-items: center; gap: 8px; }
-.cat-head .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-head .size { font-variant-numeric: tabular-nums; }
-.cat-sub {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-  margin: 2px 0 0 18px;
-}
-.cat-sub .safe { color: var(--safe); }
 .cat-bar { height: 4px; border-radius: 2px; margin: 4px 0 0 18px; background: var(--hover); overflow: hidden; }
 .cat-bar span { display: block; height: 100%; }
 
@@ -257,24 +240,6 @@ main {
 .note { color: var(--muted); font-size: 12px; margin-top: 14px; word-break: break-word; }
 .nav h2 .count { font-weight: normal; }
 
-/* Cleanup basket: red, since what's in it is to be deleted. */
-.basket-box {
-  margin: 18px -8px 0;
-  padding: 2px 8px 10px;
-  border-left: 3px solid var(--del);
-  border-radius: 0 var(--r-card) var(--r-card) 0;
-  background: var(--del-bg);
-}
-.nav .basket-head { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--del-text); cursor: pointer; border-radius: 4px; }
-.basket-head:hover .b-open, .basket-head:focus-visible .b-open { text-decoration: underline; }
-.basket-head .b-open { margin-left: auto; font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--accent); }
-/* Scrolls on its own, like the categories. */
-.basket-items { list-style: none; margin: 0 -6px; padding: 0 6px; max-height: 30vh; overflow-y: auto; }
-.basket-items li { padding: 5px 6px 5px 8px; margin: 2px 0; border-radius: var(--r); cursor: pointer; border-left: 2px solid var(--del); }
-.basket-items li:hover { background: var(--hover); }
-.basket-items li.lvl-blocked { border-left-color: var(--muted); }
-.basket-items li.b-more { border-left: none; color: var(--accent); font-size: 12px; }
-.basket-box .b-size, .basket-total { color: var(--del-text); }
 .b-head { display: flex; align-items: center; gap: 6px; }
 .b-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .b-size { font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -287,9 +252,6 @@ main {
 .lvl-danger .b-dot { background: var(--del); }
 .lvl-danger .b-reason { color: var(--del-text); }
 .lvl-blocked .b-name { text-decoration: line-through; color: var(--muted); }
-.basket-foot { margin-top: 8px; }
-.basket-total { font-weight: 600; font-variant-numeric: tabular-nums; margin-bottom: 6px; cursor: pointer; }
-.basket-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 button.danger-btn { background: var(--del-strong); border-color: var(--del-strong); color: #fff; }
 button.danger-btn:hover { filter: brightness(1.08); background: var(--del-strong); }
 button:disabled { opacity: .5; cursor: default; filter: none; }
@@ -508,8 +470,16 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .nav-drives .nd-bar span { display: block; height: 100%; background: var(--accent); }
 .nav-drives .nd-bar span.full { background: var(--warn); }
 .nav-drives .nd-free { flex-basis: 100%; margin-left: 26px; font-size: 11px; font-weight: normal; color: var(--muted); }
-.nav .cats { max-height: none; overflow: visible; }
-.nav-settings { margin-top: auto; }
+.nav-settings { margin-top: auto; position: sticky; bottom: 0; background: var(--bg); }
+#basket-open svg { color: var(--del); }
+.nb-badge { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--del-text); font-variant-numeric: tabular-nums; }
+
+/* Icons in the command bar and in front of names. */
+.toolbar button { display: inline-flex; align-items: center; gap: 6px; }
+.toolbar button svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.toolbar button.primary svg { color: inherit; }
+.name-cell .ico { width: 16px; height: 16px; flex: none; margin-right: 7px; }
+.ico.file { color: var(--muted); }
 .nav .note:empty { display: none; }
 
 /* The selected item's folders, like Explorer's address bar. */
@@ -531,7 +501,13 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 .address button:hover { background: var(--hover); }
 .address .here { flex: 0 1 auto; min-width: 40px; color: var(--text); font-weight: 600; padding: 2px 6px; overflow: hidden; text-overflow: ellipsis; }
 .address .sep { opacity: .6; flex: none; }
-.f-summary { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.addr-row { display: flex; align-items: center; gap: 8px; margin: 6px 8px 0; }
+.addr-row .address { flex: 1; min-width: 0; margin: 0; }
+.f-summary { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#f-toggle { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+#f-toggle svg { width: 15px; height: 15px; color: var(--accent); }
+#f-toggle.on, #f-toggle[aria-expanded="true"] { background: var(--select); }
+.filters { margin-top: 6px; }
 
 .details {
   width: 320px;
@@ -543,7 +519,16 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
   padding: 12px 12px 10px;
   background: var(--bg);
 }
-.details .totals { flex: none; }
+/* The selected item, above the treemap. */
+.selinfo { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); }
+.si-name { display: flex; align-items: center; gap: 8px; font: 600 15px/1.3 var(--font-display); min-width: 0; }
+.si-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.si-name .ico { width: 18px; height: 18px; flex: none; }
+.si-size { font: 600 24px/1.2 var(--font-display); font-variant-numeric: tabular-nums; }
+.si-facts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.si-cat { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.si-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ov-card.totals .root-name { margin-bottom: 2px; }
 
 /* A view fades in and rises 3px when shown (display none to shown restarts it). */
 .overview, .scroller { animation: view-in var(--dur-base) var(--ease-out); }
@@ -799,7 +784,7 @@ button:disabled { opacity: .5; cursor: default; filter: none; }
 #rows { position: absolute; top: 0; left: 0; width: max(100%, var(--cols-min, 100%)); }
 
 .row {
-  height: 26px;
+  height: 30px;
   cursor: default;
   white-space: nowrap;
   user-select: none; /* Shift+click selects rows, not text */

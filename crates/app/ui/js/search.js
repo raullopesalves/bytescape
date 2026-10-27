@@ -48,8 +48,9 @@ async function applyFilters() {
   const r = await invoke('search', { filter: f });
   if (seq !== searchSeq) return; // the user kept typing
   const active = !filterIsEmpty(f);
-  for (const li of $('cats').children) li.classList.toggle('on', li.dataset.id === $('f-cat').value);
   $('f-clear').hidden = !active;
+  // The Filters button shows when a filter other than the name is on.
+  $('f-toggle').classList.toggle('on', ['f-ext', 'f-min', 'f-max', 'f-age', 'f-cat'].some((id) => $(id).value) || $('f-folders').checked);
   if (!active) {
     search = null;
     $('f-summary').textContent = '';
@@ -136,7 +137,7 @@ function resultHtml(i) {
   if (r.flags & FLAG.DUP) cls.push('dup');
   const catCell = cat ? `<span class="swatch" style="background:${colorOf(cat)}"></span>${esc(cat.name)}` : '';
   return `<div class="${cls.join(' ')}" data-i="${i}" role="option" title="${esc(it.path)}">
-    <div class="name-cell" style="padding-left:8px">${riskHtml(r)}<span class="label">${esc(r.name)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
+    <div class="name-cell" style="padding-left:8px">${riskHtml(r)}${iconOf(r)}<span class="label">${esc(r.name)}</span>${basketIds.has(r.id) ? '<span class="tag basket">in basket</span>' : ''}</div>
     <div class="folder-cell">${folderLinks(it)}</div>
     <div class="num">${human(r.size)}</div>
     <div class="pct"><div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div><span class="val">${pct.toFixed(1)}%</span></div>
@@ -218,6 +219,7 @@ async function selectResult(i, how = 'one') {
   if (!it) return;
   $('selpath').textContent = it.path;
   $('reveal').hidden = false;
+  showSelected(it.row, summary.root.size);
   showAddress(it.row.id);
   // Its ancestors let the treemap outline the nearest block that is drawn.
   const chain = await invoke('ancestors', { id: it.row.id });

@@ -8,7 +8,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const ROW_H = 26; // must match .row height in style.css
+const ROW_H = 30; // must match .row height in style.css
 const OVERSCAN = 10;
 
 // Node flags, as in scanner::flags.
@@ -73,6 +73,10 @@ function newTree(root) {
 /** Whether the list shows search results as one list by size. */
 const flat = () => view === 'results' && !grouped;
 
+// Explorer-style icons in front of names: a yellow folder, an outlined page.
+const FOLDER_ICO = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4A1.5 1.5 0 0 1 3 2.5h3.2l1.5 1.5H13A1.5 1.5 0 0 1 14.5 5.5v6.5A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12z" fill="#e0a83a"/></svg>';
+const FILE_ICO = '<svg class="ico file" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4zM9 1.5v3h3"/></svg>';
+const iconOf = (r) => (r.kind === 'dir' ? FOLDER_ICO : FILE_ICO);
 const SHIELD = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 1 2.5 3.2v4.3c0 3.4 2.3 6 5.5 7.5 3.2-1.5 5.5-4.1 5.5-7.5V3.2z" fill="currentColor"/></svg>';
 
 /** A shield before the name of anything that probably shouldn't be touched. */
@@ -239,6 +243,16 @@ async function renderNavDrives() {
 }
 
 function renderSide() {
+  renderNavDrives();
+  const s = summary;
+  const note = $('rules-note');
+  note.classList.toggle('error', !!s.rulesError);
+  note.textContent = s.rulesError ? `Your rules file has a problem, so the built-in rules were used: ${s.rulesError}` : '';
+  if (view === 'overview') renderOverview();
+}
+
+/** The scan's totals, at the top of Overview. */
+function totalsHtml() {
   const s = summary;
   const r = s.root;
   const extra = [];
@@ -259,34 +273,9 @@ function renderSide() {
       <div class="du-bar"><span class="du-used" style="width:${pct(used)}%"></span><span class="du-scan" style="width:${pct(Math.min(r.alloc, used))}%"></span></div>
     </div>`;
   }
-  $('totals').innerHTML = `
+  return `
     <div class="root-name">${esc(r.name)}</div>
     <div class="big-size">${human(r.size)}</div>
     ${drive}
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
-
-  const list = [...s.categories].filter((c) => c.files > 0).sort((a, b) => b.size - a.size);
-  $('cats').innerHTML = list.map((c) => {
-    const pct = r.size > 0 ? (c.size * 100) / r.size : 0;
-    const color = colorOf(c);
-    const safe = c.cleanup === 'safe' ? '<span class="safe">usually safe to clean</span>' : '';
-    return `<li data-id="${c.id}" title="Show only ${esc(c.name)}">
-      <div class="cat-head"><span class="swatch" style="background:${color}"></span>
-        <span class="name">${esc(c.name)}</span><span class="size">${human(c.size)}</span></div>
-      <div class="cat-bar"><span style="width:${pct}%;background:${color}"></span></div>
-      <div class="cat-sub"><span>${pct.toFixed(1)}% · ${plural(c.files, 'file')}</span>${safe}</div>
-    </li>`;
-  }).join('');
-
-  renderNavDrives();
-
-  const note = $('rules-note');
-  note.classList.toggle('error', !!s.rulesError);
-  if (s.rulesError) {
-    note.textContent = `Your rules file has a problem, so the built-in rules were used: ${s.rulesError}`;
-  } else if (s.rulesFile) {
-    note.textContent = `Your own category rules go in ${s.rulesFile}`;
-  } else {
-    note.textContent = '';
-  }
 }

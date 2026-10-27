@@ -135,7 +135,7 @@ await test('rescan a folder', async () => {
 });
 
 await test('grouped results', async () => {
-  await js(`document.querySelector('#cats li[data-id="1"]').click()`);
+  await js(`$('f-cat').value = '1'; await applyFilters()`);
   await wait(400);
   check('Documents, grouped', await js(`return [...document.querySelectorAll('#rows .row .name-cell')].map(e => e.innerText.replace(/\\s+/g, ' ').trim())`), ['▾ X:\\demo (3)', '▸ a (3)']);
   await js(`await select(1); await basketToggleSelection()`);

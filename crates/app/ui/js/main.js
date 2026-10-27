@@ -85,28 +85,18 @@ $('viewbar').addEventListener('click', (e) => {
   const v = e.target.closest('[data-view]')?.dataset.view;
   if (v) setView(v);
 });
-$('basket-items').addEventListener('click', (e) => {
-  const rm = e.target.closest('[data-remove]')?.dataset.remove;
-  if (rm !== undefined) {
-    basketToggle(Number(rm));
-    return;
-  }
-  const id = e.target.closest('li[data-id]')?.dataset.id;
-  if (id !== undefined) {
-    setView('tree');
-    revealInTree(Number(id)).then(() => $('scroller').focus());
-  }
-});
-$('basket-delete').addEventListener('click', openDeleteDialog);
-$('basket-items').addEventListener('click', (e) => {
-  if (e.target.closest('[data-open-basket]')) openBasket();
-});
 $('basket-open').addEventListener('click', openBasket);
-$('basket-open').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBasket(); }
+$('f-toggle').addEventListener('click', () => {
+  const show = $('filters').hidden;
+  $('filters').hidden = !show;
+  $('f-toggle').setAttribute('aria-expanded', String(show));
+  if (show) $('f-ext').focus();
 });
-$('basket-total').addEventListener('click', openBasket);
-$('basket-clear').addEventListener('click', async () => setBasket(await invoke('basket_clear')));
+$('selinfo').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  const id = currentId();
+  if (act && id !== undefined) itemAction(id, act);
+});
 
 $('rows').addEventListener('contextmenu', (e) => {
   const el = e.target.closest('.row');
@@ -138,13 +128,6 @@ document.addEventListener('keydown', (e) => {
 // The browser's own menu is no use here, except in text fields.
 document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest('input')) e.preventDefault();
-});
-
-$('cats').addEventListener('click', (e) => {
-  const li = e.target.closest('li[data-id]');
-  if (!li) return;
-  $('f-cat').value = $('f-cat').value === li.dataset.id ? '' : li.dataset.id;
-  applyFilters();
 });
 
 $('scroller').addEventListener('scroll', () => {

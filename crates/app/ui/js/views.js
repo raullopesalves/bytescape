@@ -37,6 +37,7 @@ async function renderOverview() {
       ? `<p class="note">${human(safeTotal)} is in categories that are usually safe to clean, but all of it is in system or OneDrive folders, so none is suggested here. Windows' Disk Cleanup is the safer way to clear system caches.</p>`
       : '<p class="note">Nothing here is in a category that is usually safe to clean.</p>';
   ov.innerHTML = `<div class="ov-grid">
+      <section class="ov-card totals"><h3>This scan</h3>${totalsHtml()}</section>
       <section class="ov-card"><h3>Where the space goes</h3><ul class="ov-list ov-cats">${catRows}</ul></section>
       <section class="ov-card"><h3>Usually safe to clean</h3>${safe}</section>
       <section class="ov-card wide"><h3>Largest files</h3>
