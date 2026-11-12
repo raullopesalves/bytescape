@@ -6,6 +6,12 @@ developer dependencies, ...), and helps you clean up safely.
 
 ![The overview of a scanned drive, with the category-coloured treemap](docs/screenshots/overview.png)
 
+[**Download for Windows**](https://github.com/raullopesalves/bytescape/releases/latest) · [Watch the demo](docs/media/bytescape-demo.webm) · [Engineering case study](docs/CASE_STUDY.md)
+
+## See the workflow
+
+The [50-second UI walkthrough](docs/media/bytescape-demo.webm) follows a scan, folder navigation, search and the cleanup basket. It uses the actual frontend with the repository's mock backend and fictional paths: no real disk is scanned and no file is deleted. The scan animation is illustrative, not a speed benchmark.
+
 ## Download
 
 Get `Bytescape_<version>_x64-setup.exe` from the
@@ -81,7 +87,27 @@ command-line tool on its own, and SHA-256 checksums.
 
 ![The cleanup basket, opened big, before anything is deleted](docs/screenshots/basket.png)
 
-The screenshots show a small demo drive.
+The screenshots show the frontend test harness with fictional files and drive statistics. No personal drive or real user profile is shown.
+
+## My contribution and technical decisions
+
+This project demonstrates my work on a Windows disk-analysis tool: the Rust scanner and category engine, desktop interface, cleanup safeguards, automated checks and release packaging.
+
+- **Rust engine, lightweight UI:** a shared scanner powers both a Tauri desktop app and a standalone CLI; the frontend uses HTML, CSS and JavaScript.
+- **Two scan paths:** a parallel folder walk works without elevation; optional direct NTFS MFT reading accelerates whole-drive scans with administrator rights.
+- **Memory-aware results:** a flat node tree supports folder totals, filtering and treemap navigation without one heavyweight object per UI row.
+- **Explicit cleanup:** a review basket, Recycle Bin default, protected-path warnings and checks immediately before deletion keep analysis separate from removal.
+- **Useful comparisons:** SQLite scan history shows what changed between scans; duplicate detection narrows candidates before hashing whole files.
+
+Read the [engineering case study](docs/CASE_STUDY.md) for the problem, decisions and verification boundary.
+
+## What is verified, and current limits
+
+[GitHub CI](https://github.com/raullopesalves/bytescape/actions) checks formatting, Clippy, Rust tests and the frontend flow in headless Edge with a mocked backend. Release builds include x64 and ARM64 Windows installers, portable apps, CLI binaries and checksums.
+
+**Current limits:** Windows only; installers are not code-signed; the MFT path requires elevation. The mock frontend walkthrough does not validate real filesystem permissions, MFT reading or native deletion. The real Recycle Bin test is excluded from the default CI run. Keep backups and review every cleanup selection.
+
+The scan timings above are measurements from development hardware, not a cross-device benchmark. The screenshots and video use synthetic data; there are no personal paths or library contents.
 
 ## Keyboard
 
