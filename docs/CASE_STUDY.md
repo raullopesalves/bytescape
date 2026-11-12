@@ -18,7 +18,7 @@ Bytescape is a Windows desktop app and CLI. This repository demonstrates product
 
 ## Walkthrough
 
-[Watch the synthetic UI demo](media/bytescape-demo.webm): scan progress → results → folder navigation → search → cleanup basket. The frontend is real, but its backend is the existing test double. All paths and files are fictional, and the recording never scans or removes a real file. It demonstrates interaction, not native-system correctness or scan performance.
+[See the animated UI demo](../README.md#see-the-workflow): scan progress → results → folder navigation → search → cleanup basket. The frontend is real, but its backend is the existing test double. All paths and files are fictional, and the recording never scans or removes a real file. It demonstrates interaction, not native-system correctness or scan performance.
 
 ## Verification boundary
 

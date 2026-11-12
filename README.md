@@ -6,11 +6,15 @@ developer dependencies, ...), and helps you clean up safely.
 
 ![The overview of a scanned drive, with the category-coloured treemap](docs/screenshots/overview.png)
 
-[**Download for Windows**](https://github.com/raullopesalves/bytescape/releases/latest) · [Watch the demo](docs/media/bytescape-demo.webm) · [Engineering case study](docs/CASE_STUDY.md)
+[**Download for Windows**](https://github.com/raullopesalves/bytescape/releases/latest) · [See the animated demo](#see-the-workflow) · [Engineering case study](docs/CASE_STUDY.md)
 
 ## See the workflow
 
-The [50-second UI walkthrough](docs/media/bytescape-demo.webm) follows a scan, folder navigation, search and the cleanup basket. It uses the actual frontend with the repository's mock backend and fictional paths: no real disk is scanned and no file is deleted. The scan animation is illustrative, not a speed benchmark.
+![Animated Bytescape walkthrough using fictional files](docs/media/bytescape-demo.gif)
+
+[Download the full 51-second video (MP4)](https://raw.githubusercontent.com/raullopesalves/bytescape/main/docs/media/bytescape-demo.mp4).
+
+The walkthrough follows a scan, folder navigation, search and the cleanup basket. It uses the actual frontend with the repository's mock backend and fictional paths: no real disk is scanned and no file is deleted. The scan animation is illustrative, not a speed benchmark.
 
 ## Download
 
